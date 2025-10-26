@@ -1,10 +1,13 @@
+mod anvil;
+
 use clap::Parser;
 use env_logger::Env;
-use fastanvil::{render_region, CCoord, HeightMode, RCoord, RegionFileLoader, RegionLoader, RenderedPalette, Rgba, TopShadeRenderer};
 use flate2::read::GzDecoder;
 use log::{error, info, warn};
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
+
+use anvil::{render_region, CCoord, HeightMode, RCoord, RegionFileLoader, RenderedPalette, Rgba, TopShadeRenderer};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
