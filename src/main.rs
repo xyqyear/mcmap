@@ -18,9 +18,9 @@ struct Args {
     #[arg(short, long)]
     region: PathBuf,
 
-    /// Output PNG file path
+    /// Output PNG file path (use '-' for stdout)
     #[arg(short, long, default_value = "map.png")]
-    output: PathBuf,
+    output: String,
 
     /// Path to the palette.tar.gz file
     #[arg(short, long)]
@@ -134,11 +134,18 @@ fn main() -> Result<()> {
         .format_timestamp(None)
         .init();
 
+    let total_start = std::time::Instant::now();
     let args = Args::parse();
 
     info!("Starting Minecraft map renderer");
     info!("Region path: {}", args.region.display());
-    info!("Output: {}", args.output.display());
+
+    let output_to_stdout = args.output == "-";
+    if output_to_stdout {
+        info!("Output: stdout");
+    } else {
+        info!("Output: {}", args.output);
+    }
 
     let height_mode = match args.calculate_heights {
         true => {
@@ -245,6 +252,7 @@ fn main() -> Result<()> {
     let mut img = image::ImageBuffer::new((dx * region_len) as u32, (dz * region_len) as u32);
 
     info!("Assembling final image...");
+    let assemble_start = std::time::Instant::now();
     for map in region_maps {
         let xrp = map.x.0 - x_range.start.0;
         let zrp = map.z.0 - z_range.start.0;
@@ -266,10 +274,25 @@ fn main() -> Result<()> {
             }
         }
     }
+    info!("⏱ Image assembly took: {:?}", assemble_start.elapsed());
 
-    info!("Saving image to: {}", args.output.display());
-    img.save(&args.output)?;
-    info!("Done! Map saved successfully.");
+    // Save image to file or stdout
+    if output_to_stdout {
+        info!("Writing image to stdout");
+        use std::io::Write;
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        // Convert ImageBuffer to DynamicImage for encoding
+        let dynamic_img = image::DynamicImage::ImageRgba8(img);
+        dynamic_img.write_to(&mut cursor, image::ImageFormat::Png)?;
+        let png_data = cursor.into_inner();
+        std::io::stdout().write_all(&png_data)?;
+        info!("Image written to stdout successfully");
+    } else {
+        info!("Saving image to: {}", args.output);
+        img.save(&args.output)?;
+        info!("Done! Map saved successfully.");
+    }
+    info!("⏱ Total time: {:?}", total_start.elapsed());
 
     Ok(())
 }
