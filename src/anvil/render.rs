@@ -1,6 +1,5 @@
 // Rendering chunks to overhead maps
 
-use super::block::BlockArchetype;
 use super::chunk::{Chunk, ChunkData, HeightMode};
 use super::region::{CCoord, RCoord, RegionLoader};
 use std::collections::HashMap;
@@ -99,15 +98,13 @@ impl<'a> TopShadeRenderer<'a> {
     }
 
     pub fn render(&self, chunk: &ChunkData, north: Option<&ChunkData>) -> [Rgba; 16 * 16] {
-        // For Post-1.13 chunks, use fastanvil's rendering directly
-        match chunk {
+        // Extract Pre13Chunk directly, or use fastanvil rendering for Post-1.13
+        let pre13_chunk = match chunk {
             super::chunk::ChunkData::Post13(post13) => {
                 return self.render_post13(post13, north);
             }
-            super::chunk::ChunkData::Pre13(_) => {
-                // Continue with our custom Pre-1.13 rendering
-            }
-        }
+            super::chunk::ChunkData::Pre13(pre13) => pre13,
+        };
 
         let mut data = [[0, 0, 0, 0]; 16 * 16];
 
@@ -118,7 +115,7 @@ impl<'a> TopShadeRenderer<'a> {
                 let air_height = chunk.surface_height(x, z, self.height_mode);
                 let block_height = (air_height - 1).max(y_range.start);
 
-                let colour = self.drill_for_colour(x, block_height, z, chunk, y_range.start);
+                let colour = self.drill_for_colour_pre13(x, block_height, z, pre13_chunk, y_range.start);
 
                 let north_air_height = match z {
                     0 => north
@@ -160,73 +157,6 @@ impl<'a> TopShadeRenderer<'a> {
         });
 
         fa_renderer.render(chunk.inner(), north_fa)
-    }
-
-    /// Look up color for Pre-1.13 block from palette
-    fn pick_color_for_pre13_block(&self, block: &super::block::Block) -> Rgba {
-        // Look up by full block name in the loaded palette
-        if let Some(&color) = self.palette.blockstates.get(block.name) {
-            return color;
-        }
-
-        // Fallback: try without "minecraft:" prefix for legacy names
-        let name_without_prefix = block.name.strip_prefix("minecraft:").unwrap_or(block.name);
-        let legacy_name = format!("minecraft:{}", name_without_prefix);
-        if let Some(&color) = self.palette.blockstates.get(&legacy_name) {
-            return color;
-        }
-
-        // Default for unknown blocks: gray to indicate missing palette entry
-        [128, 128, 128, 255]
-    }
-
-    fn drill_for_colour(
-        &self,
-        x: usize,
-        y_start: isize,
-        z: usize,
-        chunk: &ChunkData,
-        y_min: isize,
-    ) -> Rgba {
-        // For Pre-1.13 chunks, use the raw block ID lookup
-        if let super::chunk::ChunkData::Pre13(pre13) = chunk {
-            return self.drill_for_colour_pre13(x, y_start, z, pre13, y_min);
-        }
-
-        // For Post-1.13, use the old method (though this shouldn't be called for Post-1.13)
-        let mut y = y_start;
-        let mut colour = [0, 0, 0, 0];
-
-        while colour[3] != 255 && y >= y_min {
-            let current_block = chunk.block(x, y, z);
-
-            if let Some(current_block) = current_block {
-                match current_block.archetype {
-                    BlockArchetype::Airy => {
-                        y -= 1;
-                    }
-                    BlockArchetype::Watery => {
-                        let mut block_colour = self.pick_color_for_pre13_block(current_block);
-                        let water_depth = water_depth(x, y, z, chunk, y_min);
-                        let alpha = water_depth_to_alpha(water_depth);
-
-                        block_colour[3] = alpha;
-
-                        colour = a_over_b_colour(colour, block_colour);
-                        y -= water_depth;
-                    }
-                    _ => {
-                        let block_colour = self.pick_color_for_pre13_block(current_block);
-                        colour = a_over_b_colour(colour, block_colour);
-                        y -= 1;
-                    }
-                }
-            } else {
-                return colour;
-            }
-        }
-
-        colour
     }
 
     fn drill_for_colour_pre13(
@@ -276,24 +206,6 @@ impl<'a> TopShadeRenderer<'a> {
 
 fn water_depth_to_alpha(water_depth: isize) -> u8 {
     (180 + 2 * water_depth).min(250) as u8
-}
-
-fn water_depth(x: usize, mut y: isize, z: usize, chunk: &ChunkData, y_min: isize) -> isize {
-    let mut depth = 1;
-    while y > y_min {
-        let block = match chunk.block(x, y, z) {
-            Some(b) => b,
-            None => return depth,
-        };
-
-        if block.archetype != BlockArchetype::Watery {
-            return depth;
-        }
-
-        y -= 1;
-        depth += 1;
-    }
-    depth
 }
 
 fn water_depth_pre13(
