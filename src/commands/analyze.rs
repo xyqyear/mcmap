@@ -37,29 +37,13 @@ fn get_palette(path: &Path) -> Result<RenderedPalette> {
         blockstates.len()
     );
 
-    // Load idmap.json for Pre-1.13 block ID to name mapping
-    let idmap_path = Path::new("idmap.json");
-    let idmap: std::collections::HashMap<u16, String> = if idmap_path.exists() {
-        let file = std::fs::File::open(idmap_path)?;
-        let map: std::collections::HashMap<String, String> = serde_json::from_reader(file)?;
-        // Convert string keys to u16
-        map.into_iter()
-            .filter_map(|(k, v)| k.parse::<u16>().ok().map(|id| (id, v)))
-            .collect()
-    } else {
-        info!("idmap.json not found, using raw block IDs for Pre-1.13 blocks");
-        std::collections::HashMap::new()
-    };
-
-    info!("Block ID map loaded: {} mappings", idmap.len());
-
-    Ok(RenderedPalette { blockstates, idmap })
+    Ok(RenderedPalette { blockstates })
 }
 
 fn analyze_chunk_blocks(
     chunk_data: &[u8],
     blocks_found: &mut HashMap<String, usize>,
-    palette: &RenderedPalette,
+    _palette: &RenderedPalette,
 ) -> Result<()> {
     use crate::anvil::chunk::ChunkData;
 
@@ -80,26 +64,9 @@ fn analyze_chunk_blocks(
                 }
             }
         }
-        Ok(ChunkData::Pre13(chunk)) => {
-            // Pre-1.13 chunk - use idmap to convert block IDs to names
-            use crate::anvil::chunk::Chunk;
-            let y_range = chunk.y_range();
-
-            for y in y_range {
-                for z in 0..16 {
-                    for x in 0..16 {
-                        if let Some((block_id, data_value)) = chunk.raw_block(x, y, z) {
-                            // Try to get block name from idmap
-                            let block_name = palette
-                                .get_block_name(block_id, data_value)
-                                .map(|s| s.to_string())
-                                .unwrap_or_else(|| format!("block_{}:{}", block_id, data_value));
-
-                            *blocks_found.entry(block_name).or_insert(0) += 1;
-                        }
-                    }
-                }
-            }
+        Ok(ChunkData::Pre13(_)) => {
+            // Pre-1.13 chunks are not supported by analyze command
+            // Skip silently
         }
         Err(_) => {
             // Failed to parse, skip this chunk

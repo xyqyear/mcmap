@@ -89,23 +89,7 @@ fn get_palette(path: &Path) -> Result<RenderedPalette> {
         blockstates.len()
     );
 
-    // Load idmap.json for Pre-1.13 block ID to name mapping
-    let idmap_path = Path::new("idmap.json");
-    let idmap: std::collections::HashMap<u16, String> = if idmap_path.exists() {
-        let file = std::fs::File::open(idmap_path)?;
-        let map: std::collections::HashMap<String, String> = serde_json::from_reader(file)?;
-        // Convert string keys to u16
-        map.into_iter()
-            .filter_map(|(k, v)| k.parse::<u16>().ok().map(|id| (id, v)))
-            .collect()
-    } else {
-        warn!("idmap.json not found, Pre-1.13 rendering may not work correctly");
-        std::collections::HashMap::new()
-    };
-
-    info!("Block ID map loaded: {} mappings", idmap.len());
-
-    Ok(RenderedPalette { blockstates, idmap })
+    Ok(RenderedPalette { blockstates })
 }
 
 pub fn execute(args: RenderArgs) -> Result<()> {

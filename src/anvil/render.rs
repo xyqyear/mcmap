@@ -11,8 +11,6 @@ pub type Rgba = [u8; 4];
 pub struct RenderedPalette {
     /// Map from block name (with optional state) to RGBA color
     pub blockstates: HashMap<String, Rgba>,
-    /// Map from combined block ID (block_id << 4 + metadata) to block name for Pre-1.13
-    pub idmap: HashMap<u16, String>,
 }
 
 impl RenderedPalette {
@@ -30,26 +28,6 @@ impl RenderedPalette {
             grass: grass_map,
             foliage: foliage_map,
         }
-    }
-
-    /// Get block name from Pre-1.13 block ID and metadata
-    pub fn get_block_name(&self, block_id: u16, metadata: u8) -> Option<&str> {
-        let combined_id = (block_id << 4) | (metadata as u16);
-        self.idmap.get(&combined_id).map(|s| s.as_str())
-    }
-
-    /// Get color for a Pre-1.13 block
-    /// Now uses O(1) lookup since palette.json has base colors for all blocks
-    pub fn get_color_for_pre13(&self, block_id: u16, metadata: u8) -> Rgba {
-        if let Some(block_name) = self.get_block_name(block_id, metadata) {
-            // Direct O(1) lookup
-            if let Some(&color) = self.blockstates.get(block_name) {
-                return color;
-            }
-        }
-
-        // Default for unknown blocks: gray to indicate missing palette entry
-        [128, 128, 128, 255]
     }
 }
 
@@ -98,29 +76,25 @@ impl<'a> TopShadeRenderer<'a> {
     }
 
     pub fn render(&self, chunk: &ChunkData, north: Option<&ChunkData>) -> [Rgba; 16 * 16] {
-        // Extract Pre13Chunk directly, or use fastanvil rendering for Post-1.13
-        let pre13_chunk = match chunk {
-            super::chunk::ChunkData::Post13(post13) => {
-                return self.render_post13(post13, north);
-            }
-            super::chunk::ChunkData::Pre13(pre13) => pre13,
-        };
+        // For Post-1.13 chunks, use fastanvil's rendering directly
+        if let super::chunk::ChunkData::Post13(post13) = chunk {
+            return self.render_post13(post13, north);
+        }
 
+        // For Pre-1.13 chunks: simple gray heightmap with shading
         let mut data = [[0, 0, 0, 0]; 16 * 16];
-
-        let y_range = chunk.y_range();
 
         for z in 0..16 {
             for x in 0..16 {
                 let air_height = chunk.surface_height(x, z, self.height_mode);
-                let block_height = (air_height - 1).max(y_range.start);
 
-                let colour = self.drill_for_colour_pre13(x, block_height, z, pre13_chunk, y_range.start);
+                // Use fixed gray color for all Pre-1.13 blocks
+                let colour = [128, 128, 128, 255];
 
                 let north_air_height = match z {
                     0 => north
                         .map(|c| c.surface_height(x, 15, self.height_mode))
-                        .unwrap_or(block_height),
+                        .unwrap_or(air_height),
                     z => chunk.surface_height(x, z - 1, self.height_mode),
                 };
                 let colour = top_shade_colour(colour, air_height, north_air_height);
@@ -158,96 +132,6 @@ impl<'a> TopShadeRenderer<'a> {
 
         fa_renderer.render(chunk.inner(), north_fa)
     }
-
-    fn drill_for_colour_pre13(
-        &self,
-        x: usize,
-        y_start: isize,
-        z: usize,
-        chunk: &super::chunk::Pre13Chunk,
-        y_min: isize,
-    ) -> Rgba {
-        let mut y = y_start;
-        let mut colour = [0, 0, 0, 0];
-
-        while colour[3] != 255 && y >= y_min {
-            // Get raw block ID and metadata
-            if let Some((block_id, metadata)) = chunk.raw_block(x, y, z) {
-                // Check if it's air (block_id 0)
-                if block_id == 0 {
-                    y -= 1;
-                    continue;
-                }
-
-                // Check if it's water (block_id 8 or 9)
-                if block_id == 8 || block_id == 9 {
-                    let mut block_colour = self.palette.get_color_for_pre13(block_id, metadata);
-                    let water_depth = water_depth_pre13(x, y, z, chunk, y_min);
-                    let alpha = water_depth_to_alpha(water_depth);
-
-                    block_colour[3] = alpha;
-
-                    colour = a_over_b_colour(colour, block_colour);
-                    y -= water_depth;
-                } else {
-                    // Solid block
-                    let block_colour = self.palette.get_color_for_pre13(block_id, metadata);
-                    colour = a_over_b_colour(colour, block_colour);
-                    y -= 1;
-                }
-            } else {
-                return colour;
-            }
-        }
-
-        colour
-    }
-}
-
-fn water_depth_to_alpha(water_depth: isize) -> u8 {
-    (180 + 2 * water_depth).min(250) as u8
-}
-
-fn water_depth_pre13(
-    x: usize,
-    mut y: isize,
-    z: usize,
-    chunk: &super::chunk::Pre13Chunk,
-    y_min: isize,
-) -> isize {
-    let mut depth = 1;
-    while y > y_min {
-        let (block_id, _) = match chunk.raw_block(x, y, z) {
-            Some(b) => b,
-            None => return depth,
-        };
-
-        // Check if it's water (block_id 8 or 9)
-        if block_id != 8 && block_id != 9 {
-            return depth;
-        }
-
-        y -= 1;
-        depth += 1;
-    }
-    depth
-}
-
-fn a_over_b_colour(a: Rgba, b: Rgba) -> Rgba {
-    let a_a = a[3] as f32 / 255.0;
-    let b_a = b[3] as f32 / 255.0;
-
-    let out_a = a_a + b_a * (1.0 - a_a);
-
-    if out_a == 0.0 {
-        return [0, 0, 0, 0];
-    }
-
-    let out_r = (a[0] as f32 * a_a + b[0] as f32 * b_a * (1.0 - a_a)) / out_a;
-    let out_g = (a[1] as f32 * a_a + b[1] as f32 * b_a * (1.0 - a_a)) / out_a;
-    let out_b = (a[2] as f32 * a_a + b[2] as f32 * b_a * (1.0 - a_a)) / out_a;
-
-    [out_r as u8, out_g as u8, out_b as u8, (out_a * 255.0) as u8]
 }
 
 fn top_shade_colour(colour: Rgba, height: isize, north_height: isize) -> Rgba {

@@ -18,6 +18,9 @@ enum Commands {
     /// Render region files to PNG overhead maps
     Render(commands::render::RenderArgs),
 
+    /// Render region files as height-based heatmaps
+    Heightmap(commands::heightmap::HeightmapArgs),
+
     /// Analyze blocks in region files and find unknown blocks
     Analyze(commands::analyze::AnalyzeArgs),
 
@@ -34,6 +37,7 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Render(args) => commands::render::execute(args),
+        Commands::Heightmap(args) => commands::heightmap::execute(args),
         Commands::Analyze(args) => commands::analyze::execute(args),
         Commands::GenPalette(args) => commands::gen_palette::execute(args),
     }
