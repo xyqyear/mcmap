@@ -1,7 +1,6 @@
 // Render command - converts MCA files to PNG overhead maps
 
 use clap::Args;
-use flate2::read::GzDecoder;
 use log::{error, info, warn};
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
@@ -81,52 +80,32 @@ fn auto_size(coords: &[(RCoord, RCoord)]) -> Option<Rectangle> {
 fn get_palette(path: &Path) -> Result<RenderedPalette> {
     info!("Loading palette from: {}", path.display());
 
-    let f = std::fs::File::open(path)?;
-    let f = GzDecoder::new(f);
-    let mut ar = tar::Archive::new(f);
-    let mut grass = Err("no grass colour map");
-    let mut foliage = Err("no foliage colour map");
-    let mut blockstates = Err("no blockstate palette");
+    // Load the palette.json file directly
+    let file = std::fs::File::open(path)?;
+    let blockstates: std::collections::HashMap<String, Rgba> = serde_json::from_reader(file)?;
 
-    for file in ar.entries()? {
-        let mut file = file?;
-        match file.path()?.to_str().ok_or("invalid path in TAR")? {
-            "grass-colourmap.png" => {
-                use std::io::Read;
-                let mut buf = vec![];
-                file.read_to_end(&mut buf)?;
+    info!(
+        "Palette loaded successfully: {} block states",
+        blockstates.len()
+    );
 
-                grass = Ok(
-                    image::load_from_memory_with_format(&buf, image::ImageFormat::Png)?
-                        .into_rgba8(),
-                );
-            }
-            "foliage-colourmap.png" => {
-                use std::io::Read;
-                let mut buf = vec![];
-                file.read_to_end(&mut buf)?;
-
-                foliage = Ok(
-                    image::load_from_memory_with_format(&buf, image::ImageFormat::Png)?
-                        .into_rgba8(),
-                );
-            }
-            "blockstates.json" => {
-                let json: std::collections::HashMap<String, Rgba> = serde_json::from_reader(file)?;
-                blockstates = Ok(json);
-            }
-            _ => {}
-        }
-    }
-
-    let p = RenderedPalette {
-        blockstates: blockstates?,
-        grass: grass?,
-        foliage: foliage?,
+    // Load idmap.json for Pre-1.13 block ID to name mapping
+    let idmap_path = Path::new("idmap.json");
+    let idmap: std::collections::HashMap<u16, String> = if idmap_path.exists() {
+        let file = std::fs::File::open(idmap_path)?;
+        let map: std::collections::HashMap<String, String> = serde_json::from_reader(file)?;
+        // Convert string keys to u16
+        map.into_iter()
+            .filter_map(|(k, v)| k.parse::<u16>().ok().map(|id| (id, v)))
+            .collect()
+    } else {
+        warn!("idmap.json not found, Pre-1.13 rendering may not work correctly");
+        std::collections::HashMap::new()
     };
 
-    info!("Palette loaded successfully");
-    Ok(p)
+    info!("Block ID map loaded: {} mappings", idmap.len());
+
+    Ok(RenderedPalette { blockstates, idmap })
 }
 
 pub fn execute(args: RenderArgs) -> Result<()> {

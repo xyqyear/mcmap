@@ -3,9 +3,56 @@
 use super::block::BlockArchetype;
 use super::chunk::{Chunk, ChunkData, HeightMode};
 use super::region::{CCoord, RCoord, RegionLoader};
+use std::collections::HashMap;
 
 pub type Rgba = [u8; 4];
-pub use fastanvil::RenderedPalette;
+
+/// Simplified palette that maps block names to RGBA colors
+#[derive(Debug, Clone)]
+pub struct RenderedPalette {
+    /// Map from block name (with optional state) to RGBA color
+    pub blockstates: HashMap<String, Rgba>,
+    /// Map from combined block ID (block_id << 4 + metadata) to block name for Pre-1.13
+    pub idmap: HashMap<u16, String>,
+}
+
+impl RenderedPalette {
+    /// Create a fastanvil-compatible palette for Post-1.13 rendering
+    /// This creates dummy grass/foliage colormaps since we don't use biome colors
+    pub fn to_fastanvil_palette(&self) -> fastanvil::RenderedPalette {
+        use image::RgbaImage;
+
+        // Create dummy 256x256 colormap images (standard size for Minecraft colormaps)
+        let grass_map = RgbaImage::from_pixel(256, 256, image::Rgba([100, 150, 50, 255]));
+        let foliage_map = RgbaImage::from_pixel(256, 256, image::Rgba([50, 100, 30, 255]));
+
+        fastanvil::RenderedPalette {
+            blockstates: self.blockstates.clone(),
+            grass: grass_map,
+            foliage: foliage_map,
+        }
+    }
+
+    /// Get block name from Pre-1.13 block ID and metadata
+    pub fn get_block_name(&self, block_id: u16, metadata: u8) -> Option<&str> {
+        let combined_id = (block_id << 4) | (metadata as u16);
+        self.idmap.get(&combined_id).map(|s| s.as_str())
+    }
+
+    /// Get color for a Pre-1.13 block
+    /// Now uses O(1) lookup since palette.json has base colors for all blocks
+    pub fn get_color_for_pre13(&self, block_id: u16, metadata: u8) -> Rgba {
+        if let Some(block_name) = self.get_block_name(block_id, metadata) {
+            // Direct O(1) lookup
+            if let Some(&color) = self.blockstates.get(block_name) {
+                return color;
+            }
+        }
+
+        // Default for unknown blocks: magenta to indicate missing palette entry
+        [255, 0, 255, 255]
+    }
+}
 
 /// Map of a rendered region
 pub struct RegionMap {
@@ -88,14 +135,20 @@ impl<'a> TopShadeRenderer<'a> {
         data
     }
 
-    fn render_post13(&self, chunk: &super::chunk::Post13Chunk, north: Option<&ChunkData>) -> [Rgba; 16 * 16] {
+    fn render_post13(
+        &self,
+        chunk: &super::chunk::Post13Chunk,
+        north: Option<&ChunkData>,
+    ) -> [Rgba; 16 * 16] {
         // Use fastanvil's renderer for Post-1.13 chunks
         let fa_mode = match self.height_mode {
             HeightMode::Trust => fastanvil::HeightMode::Trust,
             HeightMode::Calculate => fastanvil::HeightMode::Calculate,
         };
 
-        let fa_renderer = fastanvil::TopShadeRenderer::new(self.palette, fa_mode);
+        // Convert our palette to fastanvil format
+        let fa_palette = self.palette.to_fastanvil_palette();
+        let fa_renderer = fastanvil::TopShadeRenderer::new(&fa_palette, fa_mode);
 
         // Get north chunk as fastanvil JavaChunk if available
         let north_fa = north.and_then(|n| {
@@ -135,6 +188,12 @@ impl<'a> TopShadeRenderer<'a> {
         chunk: &ChunkData,
         y_min: isize,
     ) -> Rgba {
+        // For Pre-1.13 chunks, use the raw block ID lookup
+        if let super::chunk::ChunkData::Pre13(pre13) = chunk {
+            return self.drill_for_colour_pre13(x, y_start, z, pre13, y_min);
+        }
+
+        // For Post-1.13, use the old method (though this shouldn't be called for Post-1.13)
         let mut y = y_start;
         let mut colour = [0, 0, 0, 0];
 
@@ -169,6 +228,50 @@ impl<'a> TopShadeRenderer<'a> {
 
         colour
     }
+
+    fn drill_for_colour_pre13(
+        &self,
+        x: usize,
+        y_start: isize,
+        z: usize,
+        chunk: &super::chunk::Pre13Chunk,
+        y_min: isize,
+    ) -> Rgba {
+        let mut y = y_start;
+        let mut colour = [0, 0, 0, 0];
+
+        while colour[3] != 255 && y >= y_min {
+            // Get raw block ID and metadata
+            if let Some((block_id, metadata)) = chunk.raw_block(x, y, z) {
+                // Check if it's air (block_id 0)
+                if block_id == 0 {
+                    y -= 1;
+                    continue;
+                }
+
+                // Check if it's water (block_id 8 or 9)
+                if block_id == 8 || block_id == 9 {
+                    let mut block_colour = self.palette.get_color_for_pre13(block_id, metadata);
+                    let water_depth = water_depth_pre13(x, y, z, chunk, y_min);
+                    let alpha = water_depth_to_alpha(water_depth);
+
+                    block_colour[3] = alpha;
+
+                    colour = a_over_b_colour(colour, block_colour);
+                    y -= water_depth;
+                } else {
+                    // Solid block
+                    let block_colour = self.palette.get_color_for_pre13(block_id, metadata);
+                    colour = a_over_b_colour(colour, block_colour);
+                    y -= 1;
+                }
+            } else {
+                return colour;
+            }
+        }
+
+        colour
+    }
 }
 
 fn water_depth_to_alpha(water_depth: isize) -> u8 {
@@ -193,6 +296,31 @@ fn water_depth(x: usize, mut y: isize, z: usize, chunk: &ChunkData, y_min: isize
     depth
 }
 
+fn water_depth_pre13(
+    x: usize,
+    mut y: isize,
+    z: usize,
+    chunk: &super::chunk::Pre13Chunk,
+    y_min: isize,
+) -> isize {
+    let mut depth = 1;
+    while y > y_min {
+        let (block_id, _) = match chunk.raw_block(x, y, z) {
+            Some(b) => b,
+            None => return depth,
+        };
+
+        // Check if it's water (block_id 8 or 9)
+        if block_id != 8 && block_id != 9 {
+            return depth;
+        }
+
+        y -= 1;
+        depth += 1;
+    }
+    depth
+}
+
 fn a_over_b_colour(a: Rgba, b: Rgba) -> Rgba {
     let a_a = a[3] as f32 / 255.0;
     let b_a = b[3] as f32 / 255.0;
@@ -207,12 +335,7 @@ fn a_over_b_colour(a: Rgba, b: Rgba) -> Rgba {
     let out_g = (a[1] as f32 * a_a + b[1] as f32 * b_a * (1.0 - a_a)) / out_a;
     let out_b = (a[2] as f32 * a_a + b[2] as f32 * b_a * (1.0 - a_a)) / out_a;
 
-    [
-        out_r as u8,
-        out_g as u8,
-        out_b as u8,
-        (out_a * 255.0) as u8,
-    ]
+    [out_r as u8, out_g as u8, out_b as u8, (out_a * 255.0) as u8]
 }
 
 fn top_shade_colour(colour: Rgba, height: isize, north_height: isize) -> Rgba {

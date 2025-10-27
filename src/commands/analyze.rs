@@ -1,7 +1,6 @@
 // Analyze command - finds blocks not present in the palette
 
 use clap::Args;
-use flate2::read::GzDecoder;
 use log::{error, info};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -29,57 +28,38 @@ pub struct AnalyzeArgs {
 fn get_palette(path: &Path) -> Result<RenderedPalette> {
     info!("Loading palette from: {}", path.display());
 
-    let f = std::fs::File::open(path)?;
-    let f = GzDecoder::new(f);
-    let mut ar = tar::Archive::new(f);
-    let mut grass = Err("no grass colour map");
-    let mut foliage = Err("no foliage colour map");
-    let mut blockstates = Err("no blockstate palette");
+    // Load the palette.json file directly
+    let file = std::fs::File::open(path)?;
+    let blockstates: std::collections::HashMap<String, Rgba> = serde_json::from_reader(file)?;
 
-    for file in ar.entries()? {
-        let mut file = file?;
-        match file.path()?.to_str().ok_or("invalid path in TAR")? {
-            "grass-colourmap.png" => {
-                use std::io::Read;
-                let mut buf = vec![];
-                file.read_to_end(&mut buf)?;
+    info!(
+        "Palette loaded successfully: {} block states",
+        blockstates.len()
+    );
 
-                grass = Ok(
-                    image::load_from_memory_with_format(&buf, image::ImageFormat::Png)?
-                        .into_rgba8(),
-                );
-            }
-            "foliage-colourmap.png" => {
-                use std::io::Read;
-                let mut buf = vec![];
-                file.read_to_end(&mut buf)?;
-
-                foliage = Ok(
-                    image::load_from_memory_with_format(&buf, image::ImageFormat::Png)?
-                        .into_rgba8(),
-                );
-            }
-            "blockstates.json" => {
-                let json: std::collections::HashMap<String, Rgba> = serde_json::from_reader(file)?;
-                blockstates = Ok(json);
-            }
-            _ => {}
-        }
-    }
-
-    let p = RenderedPalette {
-        blockstates: blockstates?,
-        grass: grass?,
-        foliage: foliage?,
+    // Load idmap.json for Pre-1.13 block ID to name mapping
+    let idmap_path = Path::new("idmap.json");
+    let idmap: std::collections::HashMap<u16, String> = if idmap_path.exists() {
+        let file = std::fs::File::open(idmap_path)?;
+        let map: std::collections::HashMap<String, String> = serde_json::from_reader(file)?;
+        // Convert string keys to u16
+        map.into_iter()
+            .filter_map(|(k, v)| k.parse::<u16>().ok().map(|id| (id, v)))
+            .collect()
+    } else {
+        info!("idmap.json not found, using raw block IDs for Pre-1.13 blocks");
+        std::collections::HashMap::new()
     };
 
-    info!("Palette loaded successfully");
-    Ok(p)
+    info!("Block ID map loaded: {} mappings", idmap.len());
+
+    Ok(RenderedPalette { blockstates, idmap })
 }
 
 fn analyze_chunk_blocks(
     chunk_data: &[u8],
     blocks_found: &mut HashMap<String, usize>,
+    palette: &RenderedPalette,
 ) -> Result<()> {
     use crate::anvil::chunk::ChunkData;
 
@@ -101,7 +81,7 @@ fn analyze_chunk_blocks(
             }
         }
         Ok(ChunkData::Pre13(chunk)) => {
-            // Pre-1.13 chunk - use raw block IDs
+            // Pre-1.13 chunk - use idmap to convert block IDs to names
             use crate::anvil::chunk::Chunk;
             let y_range = chunk.y_range();
 
@@ -109,8 +89,12 @@ fn analyze_chunk_blocks(
                 for z in 0..16 {
                     for x in 0..16 {
                         if let Some((block_id, data_value)) = chunk.raw_block(x, y, z) {
-                            // Format as "block_<id>:<data>" for Pre-1.13
-                            let block_name = format!("block_{}:{}", block_id, data_value);
+                            // Try to get block name from idmap
+                            let block_name = palette
+                                .get_block_name(block_id, data_value)
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| format!("block_{}:{}", block_id, data_value));
+
                             *blocks_found.entry(block_name).or_insert(0) += 1;
                         }
                     }
@@ -217,7 +201,9 @@ pub fn execute(args: AnalyzeArgs) -> Result<()> {
                 match region.read_chunk(chunk_x, chunk_z) {
                     Ok(Some(chunk_data)) => {
                         chunks_scanned += 1;
-                        if let Err(e) = analyze_chunk_blocks(&chunk_data, &mut blocks_found) {
+                        if let Err(e) =
+                            analyze_chunk_blocks(&chunk_data, &mut blocks_found, &palette)
+                        {
                             error!(
                                 "Error analyzing chunk ({}, {}) in region ({}, {}): {}",
                                 chunk_x, chunk_z, x.0, z.0, e

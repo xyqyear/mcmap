@@ -476,6 +476,7 @@ dependencies = [
  "log",
  "num_enum 0.7.5",
  "rayon",
+ "regex",
  "serde",
  "serde_json",
  "tar",

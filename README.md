@@ -8,12 +8,20 @@ Fast command-line tool for rendering Minecraft region files and analyzing block 
 # Build
 cargo build --release
 
-# Render a map
-./target/release/mcmap render --region r.0.0.mca --palette palette.tar.gz --output map.png
+# Render a map (using simplified palette)
+./target/release/mcmap render --region r.0.0.mca --palette palette.json --output map.png
 
 # Analyze blocks
-./target/release/mcmap analyze --region /world/region --palette palette.tar.gz --show-counts
+./target/release/mcmap analyze --region /world/region --palette palette.json --show-counts
 ```
+
+## 📁 Project Files
+
+- `palette.json` - Block name to color mapping (4695 blocks)
+- `idmap.json` - Pre-1.13 block ID to name mapping (1752 IDs)
+- `PALETTE_SYSTEM.md` - Detailed palette system documentation
+- `OPTIMIZATION_SUMMARY.md` - Performance optimization record
+- `IMPROVEMENTS.md` - Chunk parsing improvements
 
 ## Commands
 

@@ -20,6 +20,9 @@ enum Commands {
 
     /// Analyze blocks in region files and find unknown blocks
     Analyze(commands::analyze::AnalyzeArgs),
+
+    /// Generate palette.json from Minecraft JAR assets
+    GenPalette(commands::gen_palette::GenPaletteArgs),
 }
 
 fn main() -> Result<()> {
@@ -32,5 +35,6 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Render(args) => commands::render::execute(args),
         Commands::Analyze(args) => commands::analyze::execute(args),
+        Commands::GenPalette(args) => commands::gen_palette::execute(args),
     }
 }
