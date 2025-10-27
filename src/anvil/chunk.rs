@@ -4,12 +4,12 @@
 use fastnbt::{ByteArray, IntArray};
 use serde::Deserialize;
 
-use super::block::{Block, BlockArchetype, AIR, WATER, STONE, GRASS};
+use super::block::{AIR, Block, BlockArchetype, GRASS, STONE, WATER};
 
 #[derive(Debug, Clone, Copy)]
 pub enum HeightMode {
-    Trust,      // Use heightmap data from chunk
-    Calculate,  // Calculate from block data
+    Trust,     // Use heightmap data from chunk
+    Calculate, // Calculate from block data
 }
 
 /// Trait for chunk types
@@ -80,7 +80,9 @@ pub struct Section {
 }
 
 impl Section {
-    fn block(&self, x: usize, sec_y: usize, z: usize) -> &'static Block {
+    /// Get raw block_id and data_value for a block position
+    /// Returns (block_id, data_value)
+    pub fn raw_block(&self, x: usize, sec_y: usize, z: usize) -> Option<(u16, u8)> {
         let idx: usize = (sec_y << 8) + (z << 4) + x;
 
         // Try standard Blocks format first
@@ -109,7 +111,7 @@ impl Section {
                 0
             };
 
-            return simple_block_lookup(block_id, data_value);
+            return Some((block_id, data_value));
         }
 
         // Try Blocks16 format (non-standard)
@@ -117,10 +119,8 @@ impl Section {
             // Blocks16 is 8192 bytes (double size, likely 16 bits per block)
             let idx16 = idx * 2;
             if idx16 + 1 < blocks16.len() {
-                let block_id = u16::from_le_bytes([
-                    blocks16[idx16] as u8,
-                    blocks16[idx16 + 1] as u8,
-                ]);
+                let block_id =
+                    u16::from_le_bytes([blocks16[idx16] as u8, blocks16[idx16 + 1] as u8]);
 
                 let data_value = if let Some(data16) = &self.data16 {
                     let idx16_data = idx * 2;
@@ -133,26 +133,82 @@ impl Section {
                     0
                 };
 
-                return simple_block_lookup(block_id & 0xFFF, data_value);
+                return Some((block_id & 0xFFF, data_value));
             }
         }
 
+        None
+    }
+
+    fn block(&self, x: usize, sec_y: usize, z: usize) -> &'static Block {
+        if let Some((block_id, data_value)) = self.raw_block(x, sec_y, z) {
+            return simple_block_lookup(block_id, data_value);
+        }
         &AIR
     }
 }
 
-impl ChunkData {
-    /// Try to parse chunk data, attempting Post-1.13 format first, then Pre-1.13
-    pub fn from_bytes(data: &[u8]) -> Result<Self, String> {
-        // Try Post-1.13 format first (more common in newer worlds)
-        if let Ok(inner) = fastanvil::JavaChunk::from_bytes(data) {
-            return Ok(ChunkData::Post13(Post13Chunk { inner }));
-        }
+/// Helper struct to read DataVersion
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "PascalCase")]
+struct ChunkVersionCheck {
+    #[serde(rename = "DataVersion")]
+    data_version: Option<i32>,
+    level: Option<serde::de::IgnoredAny>,
+}
 
-        // Try Pre-1.13 format
-        match fastnbt::from_bytes::<Pre13Chunk>(data) {
-            Ok(chunk) => Ok(ChunkData::Pre13(chunk)),
-            Err(e) => Err(format!("Failed to parse chunk as Pre-1.13: {}", e)),
+impl ChunkData {
+    /// Parse chunk data from bytes, auto-detecting format based on DataVersion
+    ///
+    /// Version detection based on DataVersion field:
+    /// - < 1344: 1.7.10-1.12 (Pre-1.13, has "Level" tag)
+    /// - 1344-2555: 1.15 (Post-1.13, has "Level" tag)
+    /// - 2556-2824: 1.16-1.17 (Post-1.13, has "Level" tag)
+    /// - >= 2825: 1.18+ (Post-1.13, NO "Level" tag!)
+    pub fn from_bytes(data: &[u8]) -> Result<Self, String> {
+        // First, try to read DataVersion to determine chunk format
+        let version_info: Result<ChunkVersionCheck, _> = fastnbt::from_bytes(data);
+
+        match version_info {
+            Ok(info) => {
+                let data_version = info.data_version.unwrap_or(-1);
+                let has_level = info.level.is_some();
+
+                if data_version < 1344 || (data_version < 0 && has_level) {
+                    // Pre-1.13 format: 1.7.10-1.12
+                    // Has "Level" tag with Blocks/Data arrays
+                    match fastnbt::from_bytes::<Pre13Chunk>(data) {
+                        Ok(chunk) => Ok(ChunkData::Pre13(chunk)),
+                        Err(e) => Err(format!(
+                            "Failed to parse as Pre-1.13 (DataVersion {}): {}",
+                            data_version, e
+                        )),
+                    }
+                } else {
+                    // Post-1.13 format: 1.13+
+                    // Uses fastanvil's JavaChunk (handles palette-based storage)
+                    match fastanvil::JavaChunk::from_bytes(data) {
+                        Ok(inner) => Ok(ChunkData::Post13(Post13Chunk { inner })),
+                        Err(e) => Err(format!(
+                            "Failed to parse as Post-1.13 (DataVersion {}): {}",
+                            data_version, e
+                        )),
+                    }
+                }
+            }
+            Err(_) => {
+                // If we can't read version info, try both formats
+                // Try Post-1.13 first (more common in recent versions)
+                if let Ok(inner) = fastanvil::JavaChunk::from_bytes(data) {
+                    return Ok(ChunkData::Post13(Post13Chunk { inner }));
+                }
+
+                // Fall back to Pre-1.13
+                match fastnbt::from_bytes::<Pre13Chunk>(data) {
+                    Ok(chunk) => Ok(ChunkData::Pre13(chunk)),
+                    Err(e) => Err(format!("Failed to parse chunk (unknown version): {}", e)),
+                }
+            }
         }
     }
 }
@@ -213,20 +269,34 @@ impl Chunk for Pre13Chunk {
     }
 }
 
+impl Pre13Chunk {
+    /// Get raw block_id and data_value for a block position
+    /// Returns (block_id, data_value) for Pre-1.13 chunks
+    pub fn raw_block(&self, x: usize, y: isize, z: usize) -> Option<(u16, u8)> {
+        let sections = self.level.sections.as_ref()?;
+        let section_y = (y >> 4) as i8;
+
+        let section = sections.iter().find(|s| s.y == section_y)?;
+        let sec_y = (y & 0xF) as usize;
+
+        section.raw_block(x, sec_y, z)
+    }
+}
+
 /// Simplified block lookup - maps common block IDs to blocks
 fn simple_block_lookup(block_id: u16, _data_value: u8) -> &'static Block {
     match block_id {
         0 => &AIR,
-        1 => &STONE,              // Stone
-        2 => &GRASS,              // Grass block
-        3 => &STONE,              // Dirt -> Stone for simplicity
-        7 => &STONE,              // Bedrock
-        8 | 9 => &WATER,          // Water
-        10 | 11 => &STONE,        // Lava
-        12 => &STONE,             // Sand
-        13 => &STONE,             // Gravel
-        17 => &STONE,             // Wood
-        18 => &GRASS,             // Leaves
+        1 => &STONE,       // Stone
+        2 => &GRASS,       // Grass block
+        3 => &STONE,       // Dirt -> Stone for simplicity
+        7 => &STONE,       // Bedrock
+        8 | 9 => &WATER,   // Water
+        10 | 11 => &STONE, // Lava
+        12 => &STONE,      // Sand
+        13 => &STONE,      // Gravel
+        17 => &STONE,      // Wood
+        18 => &GRASS,      // Leaves
         _ => {
             // Default: treat as solid block
             &STONE

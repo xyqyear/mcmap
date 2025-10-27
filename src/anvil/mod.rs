@@ -2,10 +2,10 @@
 // Extracted and simplified from fastanvil library
 
 mod block;
-mod chunk;
-mod region;
+pub mod chunk;
+pub mod region;
 mod render;
 
 pub use chunk::HeightMode;
 pub use region::{CCoord, RCoord, RegionFileLoader};
-pub use render::{render_region, RenderedPalette, Rgba, TopShadeRenderer};
+pub use render::{RenderedPalette, Rgba, TopShadeRenderer, render_region};
