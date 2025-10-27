@@ -4,7 +4,7 @@
 use fastnbt::{ByteArray, IntArray};
 use serde::Deserialize;
 
-use super::block::{AIR, Block, BlockArchetype, GRASS, STONE, WATER};
+use super::block::{AIR, Block, BlockArchetype, STONE};
 
 #[derive(Debug, Clone, Copy)]
 pub enum HeightMode {
@@ -269,38 +269,11 @@ impl Chunk for Pre13Chunk {
     }
 }
 
-impl Pre13Chunk {
-    /// Get raw block_id and data_value for a block position
-    /// Returns (block_id, data_value) for Pre-1.13 chunks
-    pub fn raw_block(&self, x: usize, y: isize, z: usize) -> Option<(u16, u8)> {
-        let sections = self.level.sections.as_ref()?;
-        let section_y = (y >> 4) as i8;
-
-        let section = sections.iter().find(|s| s.y == section_y)?;
-        let sec_y = (y & 0xF) as usize;
-
-        section.raw_block(x, sec_y, z)
-    }
-}
-
-/// Simplified block lookup - maps common block IDs to blocks
+/// Simplified block lookup - only distinguishes air from non-air blocks
 fn simple_block_lookup(block_id: u16, _data_value: u8) -> &'static Block {
     match block_id {
         0 => &AIR,
-        1 => &STONE,       // Stone
-        2 => &GRASS,       // Grass block
-        3 => &STONE,       // Dirt -> Stone for simplicity
-        7 => &STONE,       // Bedrock
-        8 | 9 => &WATER,   // Water
-        10 | 11 => &STONE, // Lava
-        12 => &STONE,      // Sand
-        13 => &STONE,      // Gravel
-        17 => &STONE,      // Wood
-        18 => &GRASS,      // Leaves
-        _ => {
-            // Default: treat as solid block
-            &STONE
-        }
+        _ => &STONE, // All non-air blocks treated as solid
     }
 }
 

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crate::anvil::{
     CCoord, HeightMode, RCoord, RegionFileLoader, Rgba,
-    chunk::{ChunkData, Chunk},
+    chunk::{Chunk, ChunkData},
     region::RegionLoader,
 };
 
@@ -60,7 +60,12 @@ fn parse_color_mapping(json_str: &str) -> Result<Vec<ColorPoint>> {
         }
         points.push(ColorPoint {
             height: entry[0] as isize,
-            color: [entry[1] as u8, entry[2] as u8, entry[3] as u8, entry[4] as u8],
+            color: [
+                entry[1] as u8,
+                entry[2] as u8,
+                entry[3] as u8,
+                entry[4] as u8,
+            ],
         });
     }
 
@@ -78,10 +83,22 @@ fn parse_color_mapping(json_str: &str) -> Result<Vec<ColorPoint>> {
 /// -64: black, 0: blue, 128: green, 255: red
 fn default_color_mapping() -> Vec<ColorPoint> {
     vec![
-        ColorPoint { height: -64, color: [0, 0, 0, 255] },
-        ColorPoint { height: 0, color: [0, 0, 255, 255] },
-        ColorPoint { height: 128, color: [0, 255, 0, 255] },
-        ColorPoint { height: 255, color: [255, 0, 0, 255] },
+        ColorPoint {
+            height: -64,
+            color: [0, 0, 0, 255],
+        },
+        ColorPoint {
+            height: 0,
+            color: [0, 0, 255, 255],
+        },
+        ColorPoint {
+            height: 128,
+            color: [0, 255, 0, 255],
+        },
+        ColorPoint {
+            height: 255,
+            color: [255, 0, 0, 255],
+        },
     ]
 }
 
@@ -123,7 +140,11 @@ fn height_to_color(height: isize, color_map: &[ColorPoint]) -> Rgba {
 }
 
 /// Render a single chunk to heightmap colors
-fn render_chunk_heightmap(chunk: &ChunkData, height_mode: HeightMode, color_map: &[ColorPoint]) -> [Rgba; 16 * 16] {
+fn render_chunk_heightmap(
+    chunk: &ChunkData,
+    height_mode: HeightMode,
+    color_map: &[ColorPoint],
+) -> [Rgba; 16 * 16] {
     let mut data = [[0, 0, 0, 0]; 16 * 16];
 
     for z in 0..16 {
@@ -135,7 +156,8 @@ fn render_chunk_heightmap(chunk: &ChunkData, height_mode: HeightMode, color_map:
             let has_block = match chunk {
                 ChunkData::Post13(post13) => {
                     // For Post-1.13, use fastanvil's block method
-                    if let Some(block) = fastanvil::Chunk::block(post13.inner(), x, block_height, z) {
+                    if let Some(block) = fastanvil::Chunk::block(post13.inner(), x, block_height, z)
+                    {
                         block.name() != "minecraft:air" && block.name() != "minecraft:cave_air"
                     } else {
                         false
@@ -321,18 +343,17 @@ pub fn execute(args: HeightmapArgs) -> Result<()> {
         let (x, z) = parse_region_coords(filename)
             .ok_or("Invalid region filename format. Expected: r.x.z.mca")?;
 
-        info!("Rendering single region file: {} at coordinates ({}, {})", filename, x.0, z.0);
+        info!(
+            "Rendering single region file: {} at coordinates ({}, {})",
+            filename, x.0, z.0
+        );
 
-        let parent = args
-            .region
-            .parent()
-            .ok_or("Cannot get parent directory")?;
+        let parent = args.region.parent().ok_or("Cannot get parent directory")?;
 
         (parent.to_path_buf(), vec![(x, z)])
     } else {
         // Region directory
-        let bounds = get_region_bounds(&args.region)
-            .ok_or("Failed to determine region bounds")?;
+        let bounds = get_region_bounds(&args.region).ok_or("Failed to determine region bounds")?;
 
         info!("Bounds: {:?}", bounds);
 
@@ -422,18 +443,13 @@ pub fn execute(args: HeightmapArgs) -> Result<()> {
     let assembly_time = assembly_start.elapsed();
     info!("⏱ Image assembly took: {:?}", assembly_time);
 
-    // Save or output image
+    // Save or output image as PNG
     if output_to_stdout {
-        use std::io::Write;
-        use image::ImageEncoder;
-        let mut buffer = Vec::new();
-        let encoder = image::codecs::png::PngEncoder::new(&mut buffer);
-        encoder.write_image(&img, width, height, image::ColorType::Rgba8)?;
-        std::io::stdout().write_all(&buffer)?;
+        crate::commands::save_png(img, "-")?;
         info!("Done! Map written to stdout.");
     } else {
         info!("Saving image to: {}", args.output);
-        img.save(&args.output)?;
+        crate::commands::save_png(img, &args.output)?;
         info!("Done! Map saved successfully.");
     }
 

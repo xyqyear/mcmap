@@ -246,20 +246,14 @@ pub fn execute(args: RenderArgs) -> Result<()> {
     }
     info!("⏱ Image assembly took: {:?}", assemble_start.elapsed());
 
-    // Save image to file or stdout
+    // Save image to file or stdout as PNG
     if output_to_stdout {
         info!("Writing image to stdout");
-        use std::io::Write;
-        let mut cursor = std::io::Cursor::new(Vec::new());
-        // Convert ImageBuffer to DynamicImage for encoding
-        let dynamic_img = image::DynamicImage::ImageRgba8(img);
-        dynamic_img.write_to(&mut cursor, image::ImageFormat::Png)?;
-        let png_data = cursor.into_inner();
-        std::io::stdout().write_all(&png_data)?;
+        crate::commands::save_png(img, "-")?;
         info!("Image written to stdout successfully");
     } else {
         info!("Saving image to: {}", args.output);
-        img.save(&args.output)?;
+        crate::commands::save_png(img, &args.output)?;
         info!("Done! Map saved successfully.");
     }
     info!("⏱ Total time: {:?}", total_start.elapsed());
