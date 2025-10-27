@@ -49,8 +49,8 @@ impl RenderedPalette {
             }
         }
 
-        // Default for unknown blocks: magenta to indicate missing palette entry
-        [255, 0, 255, 255]
+        // Default for unknown blocks: gray to indicate missing palette entry
+        [128, 128, 128, 255]
     }
 }
 
@@ -176,8 +176,8 @@ impl<'a> TopShadeRenderer<'a> {
             return color;
         }
 
-        // Default for unknown blocks: magenta to indicate missing palette entry
-        [255, 0, 255, 255]
+        // Default for unknown blocks: gray to indicate missing palette entry
+        [128, 128, 128, 255]
     }
 
     fn drill_for_colour(
