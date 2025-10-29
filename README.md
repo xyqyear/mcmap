@@ -2,29 +2,47 @@
 
 Fast command-line tool for rendering Minecraft region files and analyzing block usage.
 
+## Installation
+
+### Download Pre-built Binaries
+
+Download the latest release for your platform from [GitHub Releases](https://github.com/xyqyear/mcmap/releases):
+
+### Build from Source
+
+```bash
+cargo build --release
+```
+
 ## Quick Start
 
 ```bash
-# Build
-cargo build --release
+# Render a map (using block colors)
+mcmap render --region r.0.0.mca --palette palette.json --output map.png
 
-# Render a map (using simplified palette)
-./target/release/mcmap render --region r.0.0.mca --palette palette.json --output map.png
+# Render a heightmap (color-coded by elevation)
+mcmap heightmap --region r.0.0.mca --output heightmap.png
 
 # Analyze blocks
-./target/release/mcmap analyze --region /world/region --palette palette.json --show-counts
+mcmap analyze --region /world/region --palette palette.json --show-counts
 
 # Generate palette from Minecraft JAR
-./target/release/mcmap gen-palette --assets /path/to/minecraft/assets/minecraft --output palette.json
+mcmap gen-palette --assets /path/to/minecraft/assets/minecraft --output palette.json
 ```
 
-## 📁 Project Files
+## Examples
 
-- `palette.json` - Block name to color mapping (4695 blocks)
-- `idmap.json` - Pre-1.13 block ID to name mapping (1752 IDs)
-- `PALETTE_SYSTEM.md` - Detailed palette system documentation
-- `OPTIMIZATION_SUMMARY.md` - Performance optimization record
-- `IMPROVEMENTS.md` - Chunk parsing improvements
+### Block-colored Render
+
+Renders blocks with their actual colors from the palette:
+
+![Render Example](readme-assets/render_example.png)
+
+### Heightmap Visualization
+
+Color-coded by elevation (default gradient: black → blue → green → red):
+
+![Heightmap Example](readme-assets/heightmap_example.png)
 
 ## Commands
 
@@ -38,9 +56,61 @@ cargo build --release
 # Basic rendering
 mcmap render -r region.mca -p palette.json -o map.png
 
-# Stdout output (for Python/HTTP integration)
+# Stdout output (e.g. for Python/HTTP integration)
 mcmap render -r region.mca -p palette.json -o -
 ```
+
+### `heightmap` - Render height-based heatmaps
+
+Generates color-coded elevation maps from region files, where colors represent terrain height.
+
+**Features:**
+
+- Two height modes:
+  - **Trust heightmap** (default): Uses pre-computed heightmap data from chunks for fast rendering
+  - **Calculate heights** (`--calculate-heights`): Scans all blocks to find surface height (slower but more accurate)
+- Linear interpolation between color points for smooth gradients
+- Custom color mapping support via JSON
+- Parallel processing for multiple regions
+- Output to file or stdout
+
+**Default color mapping:**
+
+- `-64` (bedrock level): Black
+- `0` (sea level): Blue
+- `128`: Green
+- `255` (old build height): Red
+
+**Basic usage:**
+
+```bash
+# Single region file with default colors
+mcmap heightmap -r r.0.0.mca -o heightmap.png
+
+# Entire region directory
+mcmap heightmap -r /world/region -o heightmap.png
+
+# Calculate heights instead of trusting heightmap data
+mcmap heightmap -r r.0.0.mca -o heightmap.png --calculate-heights
+
+# Output to stdout
+mcmap heightmap -r r.0.0.mca -o -
+```
+
+**Custom color mapping:**
+
+```bash
+# Custom gradient: deep blue (-64) -> cyan (0) -> yellow (128) -> red (255)
+mcmap heightmap -r r.0.0.mca -o heightmap.png \
+  --colors '[[-64,0,0,139,255],[0,0,255,255,255],[128,255,255,0,255],[255,255,0,0,255]]'
+```
+
+Color format: `[[height, r, g, b, a], ...]`
+
+- Each point defines a height and its corresponding RGBA color
+- Heights between points use linear interpolation
+- Must have at least one color point
+- Points are automatically sorted by height
 
 ### `analyze` - Find unknown blocks
 
@@ -90,12 +160,14 @@ mcmap gen-palette -a /tmp/minecraft_jar/assets/minecraft -o palette.json
 # - Base colors for state variants (e.g., minecraft:grass_block)
 ```
 
-## Python Integration
+## External Stdout Integration
+
+Both `render` and `heightmap` commands support stdout output for integration with web frameworks and other tools.
 
 ```python
 import subprocess
 
-# Render and get PNG data
+# Render block-colored map and get PNG data
 result = subprocess.run(
     ["mcmap", "render", "-r", "region.mca", "-p", "palette.json", "-o", "-"],
     stdout=subprocess.PIPE
@@ -108,34 +180,16 @@ from io import BytesIO
 return send_file(BytesIO(png_data), mimetype='image/png')
 ```
 
-## Project Structure
-
-```text
-src/
-├── main.rs              # CLI entry point with subcommands
-├── commands/
-│   ├── mod.rs          # Commands module
-│   ├── render.rs       # Render subcommand
-│   ├── analyze.rs      # Analyze subcommand
-│   └── gen_palette.rs  # Generate palette from JAR assets
-└── anvil/              # Minecraft format handling
-    ├── block.rs        # Block definitions
-    ├── chunk.rs        # Chunk parsing (Pre-1.13 & Post-1.13)
-    ├── region.rs       # Region file access
-    └── render.rs       # Rendering logic
-```
-
 ## Performance
 
-- **Render**: ~140ms per 512×512 region
-- **Analyze**: ~100ms per region with 1000 chunks
-- Scales linearly with parallel processing
+Performance benchmarks on a 512×512 region:
 
-## Documentation
-
-- `USAGE.md` - Detailed usage guide with examples
-- `example_python_usage.py` - Python integration examples
+- **Render**: ~470ms (includes block color lookup)
+- **Heightmap** (trust mode): ~210ms (uses existing heightmap data in the region file)
+- **Heightmap** (calculate mode): ~330ms (scans all blocks)
 
 ## License
 
-Uses `fastanvil` and `fastnbt` libraries for Minecraft data processing.
+This project uses `fastanvil` and `fastnbt` libraries for Minecraft data processing.
+
+Some code in this project is adapted from the [fastnbt](https://github.com/owengage/fastnbt) project.
