@@ -7,27 +7,47 @@ use std::collections::HashMap;
 pub type Rgba = [u8; 4];
 
 /// Simplified palette that maps block names to RGBA colors
-#[derive(Debug, Clone)]
 pub struct RenderedPalette {
-    /// Map from block name (with optional state) to RGBA color
+    /// Map from block name (with optional state) to RGBA color.
+    /// Kept for callers that query the palette directly (e.g. analyze command).
     pub blockstates: HashMap<String, Rgba>,
+    /// Fastanvil-compatible palette used for Post-1.13 chunk rendering.
+    /// Built once when the palette is loaded so chunk rendering does not
+    /// allocate a fresh one per chunk.
+    fa_palette: fastanvil::RenderedPalette,
+}
+
+impl std::fmt::Debug for RenderedPalette {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RenderedPalette")
+            .field("blockstates_len", &self.blockstates.len())
+            .finish()
+    }
 }
 
 impl RenderedPalette {
-    /// Create a fastanvil-compatible palette for Post-1.13 rendering
-    /// This creates dummy grass/foliage colormaps since we don't use biome colors
-    pub fn to_fastanvil_palette(&self) -> fastanvil::RenderedPalette {
+    pub fn new(blockstates: HashMap<String, Rgba>) -> Self {
         use image::RgbaImage;
 
-        // Create dummy 256x256 colormap images (standard size for Minecraft colormaps)
-        let grass_map = RgbaImage::from_pixel(256, 256, image::Rgba([100, 150, 50, 255]));
-        let foliage_map = RgbaImage::from_pixel(256, 256, image::Rgba([50, 100, 30, 255]));
+        // Dummy 256x256 colormaps — fastanvil expects them but we don't use
+        // biome-based coloring, so a single flat color per map is enough.
+        let grass = RgbaImage::from_pixel(256, 256, image::Rgba([100, 150, 50, 255]));
+        let foliage = RgbaImage::from_pixel(256, 256, image::Rgba([50, 100, 30, 255]));
 
-        fastanvil::RenderedPalette {
-            blockstates: self.blockstates.clone(),
-            grass: grass_map,
-            foliage: foliage_map,
+        let fa_palette = fastanvil::RenderedPalette {
+            blockstates: blockstates.clone(),
+            grass,
+            foliage,
+        };
+
+        Self {
+            blockstates,
+            fa_palette,
         }
+    }
+
+    pub fn fastanvil_palette(&self) -> &fastanvil::RenderedPalette {
+        &self.fa_palette
     }
 }
 
@@ -111,17 +131,14 @@ impl<'a> TopShadeRenderer<'a> {
         chunk: &super::chunk::Post13Chunk,
         north: Option<&ChunkData>,
     ) -> [Rgba; 16 * 16] {
-        // Use fastanvil's renderer for Post-1.13 chunks
         let fa_mode = match self.height_mode {
             HeightMode::Trust => fastanvil::HeightMode::Trust,
             HeightMode::Calculate => fastanvil::HeightMode::Calculate,
         };
 
-        // Convert our palette to fastanvil format
-        let fa_palette = self.palette.to_fastanvil_palette();
-        let fa_renderer = fastanvil::TopShadeRenderer::new(&fa_palette, fa_mode);
+        let fa_renderer =
+            fastanvil::TopShadeRenderer::new(self.palette.fastanvil_palette(), fa_mode);
 
-        // Get north chunk as fastanvil JavaChunk if available
         let north_fa = north.and_then(|n| {
             if let super::chunk::ChunkData::Post13(p13) = n {
                 Some(p13.inner())

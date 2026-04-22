@@ -28,16 +28,15 @@ pub struct AnalyzeArgs {
 fn get_palette(path: &Path) -> Result<RenderedPalette> {
     info!("Loading palette from: {}", path.display());
 
-    // Load the palette.json file directly
-    let file = std::fs::File::open(path)?;
-    let blockstates: std::collections::HashMap<String, Rgba> = serde_json::from_reader(file)?;
+    let bytes = std::fs::read(path)?;
+    let blockstates: std::collections::HashMap<String, Rgba> = serde_json::from_slice(&bytes)?;
 
     info!(
         "Palette loaded successfully: {} block states",
         blockstates.len()
     );
 
-    Ok(RenderedPalette { blockstates })
+    Ok(RenderedPalette::new(blockstates))
 }
 
 fn analyze_chunk_blocks(

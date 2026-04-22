@@ -1,6 +1,6 @@
 // Region file access - using fastanvil's Region but with custom chunk parsing
 
-use std::fs::File;
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 pub use fastanvil::{CCoord, RCoord};
@@ -10,15 +10,21 @@ pub trait RegionLoader {
     fn region(&self, x: RCoord, z: RCoord) -> Result<Option<Region>, String>;
 }
 
-/// Region file wrapper
+/// Region file wrapper.
+///
+/// The whole MCA file is slurped into memory up front and served through an
+/// in-memory cursor. This avoids ~32 + 1024 small random-access syscalls on
+/// the region file during rendering and is a big win on Windows where each
+/// `ReadFile` + `SetFilePointer` pair is expensive.
 pub struct Region {
-    inner: fastanvil::Region<File>,
+    inner: fastanvil::Region<Cursor<Vec<u8>>>,
 }
 
 impl Region {
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, String> {
-        let file = File::open(path).map_err(|e| e.to_string())?;
-        let inner = fastanvil::Region::from_stream(file).map_err(|e| e.to_string())?;
+        let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+        let inner =
+            fastanvil::Region::from_stream(Cursor::new(bytes)).map_err(|e| e.to_string())?;
         Ok(Self { inner })
     }
 
