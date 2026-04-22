@@ -26,8 +26,8 @@ mcmap heightmap --region r.0.0.mca --output heightmap.png
 # Analyze blocks
 mcmap analyze --region /world/region --palette palette.json --show-counts
 
-# Generate palette from Minecraft JAR
-mcmap gen-palette --assets /path/to/minecraft/assets/minecraft --output palette.json
+# Generate palette from Minecraft JAR (and optionally mod jars)
+mcmap gen-palette -p /path/to/1.20.1.jar --output palette.json
 ```
 
 ## Examples
@@ -126,38 +126,44 @@ mcmap analyze -r /world/region -p palette.json
 mcmap analyze -r /world/region -p palette.json --show-counts
 ```
 
-### `gen-palette` - Generate palette from Minecraft JAR assets
+### `gen-palette` - Generate palette from Minecraft and mod jars
 
-- Extracts block colors from Minecraft JAR textures
-- Automatically adds missing common blocks (water, air, vine, grass, fern, etc.)
-- Automatically adds base colors for block state variants (for O(1) lookup performance)
-- Outputs `palette.json` only (no grass/foliage colormaps)
+- Reads block colors directly from `.jar` / `.zip` resource packs — no extraction step.
+- Treats vanilla and mods uniformly: every pack is walked for `assets/<namespace>/{blockstates,models,textures}/...`.
+- Multiple packs can be layered, with the first-listed pack winning on conflict (list custom resource packs first, vanilla last).
+- Automatically adds missing common blocks (water, air, vine, grass, fern, etc.) and base colors for state variants (for O(1) lookup).
 
-**How to extract Minecraft JAR assets:**
+**Usage:**
 
 ```bash
-# 1. Locate your Minecraft JAR (example paths)
-# Linux: ~/.minecraft/versions/1.20.1/1.20.1.jar
-# Windows: %APPDATA%\.minecraft\versions\1.20.1\1.20.1.jar
-# macOS: ~/Library/Application Support/minecraft/versions/1.20.1/1.20.1.jar
-
-# 2. Extract the JAR file (it's just a ZIP)
-unzip ~/.minecraft/versions/1.20.1/1.20.1.jar -d /tmp/minecraft_jar
-
-# 3. Generate palette from the extracted assets
-mcmap gen-palette --assets /tmp/minecraft_jar/assets/minecraft --output palette.json
+mcmap gen-palette --pack <PATH>... --output palette.json
+    -p <PATH>    repeatable; .jar/.zip file, or directory containing .jar/.zip files
+    -o <FILE>    output path (default: palette.json)
 ```
 
-**Example usage:**
+Typical vanilla JAR locations:
+
+- Linux: `~/.minecraft/versions/1.20.1/1.20.1.jar`
+- Windows: `%APPDATA%\.minecraft\versions\1.20.1\1.20.1.jar`
+- macOS: `~/Library/Application Support/minecraft/versions/1.20.1/1.20.1.jar`
+
+**Examples:**
 
 ```bash
-# Generate palette for Minecraft 1.20.1
-mcmap gen-palette -a /tmp/minecraft_jar/assets/minecraft -o palette.json
+# Vanilla only
+mcmap gen-palette -p ~/.minecraft/versions/1.20.1/1.20.1.jar -o palette.json
 
-# The generated palette.json will include:
-# - All block states with rendered colors
-# - Missing common blocks (water, air, etc.) added automatically
-# - Base colors for state variants (e.g., minecraft:grass_block)
+# Vanilla + a mod jar (mod blocks appear as `create:cogwheel`, etc.)
+mcmap gen-palette \
+  -p create-0.5.jar \
+  -p ~/.minecraft/versions/1.20.1/1.20.1.jar \
+  -o palette.json
+
+# Point at your server's mods directory (every .jar inside is loaded)
+mcmap gen-palette -p ./server/mods -p 1.20.1.jar -o palette.json
+
+# Custom resource pack overrides vanilla block colors
+mcmap gen-palette -p my_pack.zip -p 1.20.1.jar -o palette.json
 ```
 
 ## External Stdout Integration

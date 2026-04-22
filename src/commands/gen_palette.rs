@@ -1,24 +1,32 @@
-// Generate palette from Minecraft JAR assets
-// Simplified version of fastnbt-tools' anvil-palette
+// Generate palette from Minecraft / mod jar resource packs.
+//
+// Treats vanilla and modded jars identically: every pack is a zip archive
+// containing `assets/<namespace>/{blockstates,models,textures}/...`. The
+// namespace is derived from the path, never hardcoded.
 
 use clap::Args;
 use fastanvil::{
     tex::{Blockstate, Model, Render, Renderer, Texture},
     Rgba,
 };
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use regex::Regex;
 use std::collections::HashMap;
 use std::error::Error;
+use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use zip::ZipArchive;
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 #[derive(Args, Debug)]
 pub struct GenPaletteArgs {
-    /// Path to extracted Minecraft JAR assets folder (e.g., minecraft/assets/minecraft)
-    #[arg(short, long)]
-    assets: PathBuf,
+    /// Resource pack to load: a .jar/.zip file, or a directory containing
+    /// .jar/.zip files at depth 1. Repeatable; first-listed wins on conflict
+    /// (list user packs first, vanilla last).
+    #[arg(short, long, required = true)]
+    pack: Vec<PathBuf>,
 
     /// Output palette.json file path
     #[arg(short, long, default_value = "palette.json")]
@@ -45,96 +53,197 @@ fn avg_colour(rgba_data: &[u8]) -> Rgba {
     ]
 }
 
-fn load_texture(path: &Path) -> Result<Texture> {
-    let img = image::open(path)?;
-    let img = img.to_rgba8();
-    Ok(img.into_raw())
+#[derive(Default)]
+struct Pools {
+    blockstates: HashMap<String, Blockstate>,
+    models: HashMap<String, Model>,
+    textures: HashMap<String, Texture>,
 }
 
-fn load_blockstates(blockstates_path: &Path) -> Result<HashMap<String, Blockstate>> {
-    info!("Loading blockstates from: {}", blockstates_path.display());
-    let mut blockstates = HashMap::<String, Blockstate>::new();
+#[derive(Copy, Clone, Debug)]
+enum Category {
+    Blockstate,
+    Model,
+    Texture,
+}
 
-    for entry in std::fs::read_dir(blockstates_path)? {
-        let entry = entry?;
-        let path = entry.path();
-
-        if path.is_file() {
-            let json = std::fs::read_to_string(&path)?;
-            let json: Blockstate = serde_json::from_str(&json)?;
-            blockstates.insert(
-                "minecraft:".to_owned()
-                    + path
-                        .file_stem()
-                        .ok_or(format!("invalid file name: {}", path.display()))?
-                        .to_str()
-                        .ok_or(format!("nonunicode file name: {}", path.display()))?,
-                json,
-            );
-        }
+/// Parse a zip entry path like `assets/<ns>/<category>/<rest>.<ext>` into a
+/// (category, "namespace:rest_without_ext") key. Returns None for any entry
+/// that isn't a supported resource.
+fn parse_entry(entry_name: &str) -> Option<(Category, String)> {
+    let s = entry_name.trim_start_matches('/').trim_start_matches("./");
+    let mut parts = s.splitn(4, '/');
+    let assets = parts.next()?;
+    if assets != "assets" {
+        return None;
+    }
+    let namespace = parts.next()?;
+    let category_str = parts.next()?;
+    let rest = parts.next()?;
+    if namespace.is_empty() || rest.is_empty() {
+        return None;
     }
 
-    info!("Loaded {} blockstates", blockstates.len());
-    Ok(blockstates)
-}
+    let category = match category_str {
+        "blockstates" => Category::Blockstate,
+        "models" => Category::Model,
+        "textures" => Category::Texture,
+        _ => return None,
+    };
 
-fn load_models(path: &Path) -> Result<HashMap<String, Model>> {
-    info!("Loading models from: {}", path.display());
-    let mut models = HashMap::<String, Model>::new();
-
-    for entry in std::fs::read_dir(path)? {
-        let entry = entry?;
-        let path = entry.path();
-
-        if path.is_file() {
-            let json = std::fs::read_to_string(&path)?;
-            let json: Model = serde_json::from_str(&json)?;
-            models.insert(
-                "minecraft:block/".to_owned()
-                    + path
-                        .file_stem()
-                        .ok_or(format!("invalid file name: {}", path.display()))?
-                        .to_str()
-                        .ok_or(format!("nonunicode file name: {}", path.display()))?,
-                json,
-            );
-        }
+    let (rest_no_ext, ext) = rest.rsplit_once('.')?;
+    let ext_ok = match category {
+        Category::Blockstate | Category::Model => ext.eq_ignore_ascii_case("json"),
+        Category::Texture => ext.eq_ignore_ascii_case("png"),
+    };
+    if !ext_ok {
+        return None;
     }
 
-    info!("Loaded {} models", models.len());
-    Ok(models)
+    Some((category, format!("{}:{}", namespace, rest_no_ext)))
 }
 
-fn load_textures(path: &Path) -> Result<HashMap<String, Texture>> {
-    info!("Loading textures from: {}", path.display());
-    let mut tex = HashMap::new();
+/// Expand input paths into an ordered list of archive files.
+/// User-supplied argument order is preserved; within a directory, entries are
+/// sorted alphabetically for determinism.
+fn expand_packs(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
+    let mut expanded = Vec::new();
+    for p in paths {
+        if !p.exists() {
+            return Err(format!("Pack path not found: {}", p.display()).into());
+        }
+        if p.is_file() {
+            expanded.push(p.clone());
+            continue;
+        }
+        if p.is_dir() {
+            let mut entries: Vec<PathBuf> = std::fs::read_dir(p)?
+                .filter_map(std::result::Result::ok)
+                .map(|e| e.path())
+                .filter(|e| e.is_file())
+                .filter(|e| {
+                    matches!(
+                        e.extension().and_then(|s| s.to_str()).map(|s| s.to_ascii_lowercase()),
+                        Some(ref s) if s == "jar" || s == "zip"
+                    )
+                })
+                .collect();
+            entries.sort();
+            if entries.is_empty() {
+                warn!("No .jar/.zip files found in directory: {}", p.display());
+            }
+            expanded.extend(entries);
+        } else {
+            return Err(format!("Pack path is neither file nor directory: {}", p.display()).into());
+        }
+    }
+    Ok(expanded)
+}
 
-    for entry in std::fs::read_dir(path)? {
-        let entry = entry?;
-        let path = entry.path();
+/// Read one archive, inserting every resource that isn't already present in
+/// the pools. First-wins semantics.
+fn load_archive(path: &Path, pools: &mut Pools) -> Result<()> {
+    let file = File::open(path)?;
+    let mut archive = ZipArchive::new(file)?;
 
-        if path.is_file() && path.extension().ok_or("invalid ext")?.to_string_lossy() == "png" {
-            let texture = load_texture(&path);
+    let mut bs_added = 0usize;
+    let mut m_added = 0usize;
+    let mut t_added = 0usize;
 
-            match texture {
-                Err(_) => continue,
-                Ok(texture) => {
-                    tex.insert(
-                        "minecraft:block/".to_owned()
-                            + path
-                                .file_stem()
-                                .ok_or(format!("invalid file name: {}", path.display()))?
-                                .to_str()
-                                .ok_or(format!("nonunicode file name: {}", path.display()))?,
-                        texture,
-                    );
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i)?;
+        if entry.is_dir() {
+            continue;
+        }
+        let name = entry.name().to_string();
+        let Some((category, key)) = parse_entry(&name) else {
+            continue;
+        };
+
+        match category {
+            Category::Blockstate => {
+                if pools.blockstates.contains_key(&key) {
+                    continue;
+                }
+                let mut buf = Vec::new();
+                if let Err(e) = entry.read_to_end(&mut buf) {
+                    debug!("Failed to read {}: {}", name, e);
+                    continue;
+                }
+                match serde_json::from_slice::<Blockstate>(&buf) {
+                    Ok(bs) => {
+                        pools.blockstates.insert(key, bs);
+                        bs_added += 1;
+                    }
+                    Err(e) => debug!("Failed to parse blockstate {}: {}", name, e),
+                }
+            }
+            Category::Model => {
+                if pools.models.contains_key(&key) {
+                    continue;
+                }
+                let mut buf = Vec::new();
+                if let Err(e) = entry.read_to_end(&mut buf) {
+                    debug!("Failed to read {}: {}", name, e);
+                    continue;
+                }
+                match serde_json::from_slice::<Model>(&buf) {
+                    Ok(m) => {
+                        pools.models.insert(key, m);
+                        m_added += 1;
+                    }
+                    Err(e) => debug!("Failed to parse model {}: {}", name, e),
+                }
+            }
+            Category::Texture => {
+                if pools.textures.contains_key(&key) {
+                    continue;
+                }
+                let mut buf = Vec::new();
+                if let Err(e) = entry.read_to_end(&mut buf) {
+                    debug!("Failed to read {}: {}", name, e);
+                    continue;
+                }
+                match image::load_from_memory(&buf) {
+                    Ok(img) => {
+                        pools.textures.insert(key, img.to_rgba8().into_raw());
+                        t_added += 1;
+                    }
+                    Err(e) => debug!("Failed to decode texture {}: {}", name, e),
                 }
             }
         }
     }
 
-    info!("Loaded {} textures", tex.len());
-    Ok(tex)
+    info!(
+        "  + {} blockstates, {} models, {} textures",
+        bs_added, m_added, t_added
+    );
+    Ok(())
+}
+
+fn load_packs(paths: &[PathBuf]) -> Result<Pools> {
+    let archives = expand_packs(paths)?;
+    if archives.is_empty() {
+        return Err("No pack files to load (did you pass empty directories?)".into());
+    }
+
+    let mut pools = Pools::default();
+    for archive_path in &archives {
+        info!("Loading pack: {}", archive_path.display());
+        if let Err(e) = load_archive(archive_path, &mut pools) {
+            error!("Failed to load {}: {}", archive_path.display(), e);
+        }
+    }
+
+    info!(
+        "Totals: {} blockstates, {} models, {} textures across {} pack(s)",
+        pools.blockstates.len(),
+        pools.models.len(),
+        pools.textures.len(),
+        archives.len()
+    );
+    Ok(pools)
 }
 
 #[derive(Debug)]
@@ -162,7 +271,9 @@ impl RegexMapping {
     }
 }
 
-/// Add missing common blocks that are not in the generated palette
+/// Vanilla-only fallbacks for blocks the renderer can't derive a color for
+/// (water, lava, air, etc.). Mods that need custom fallbacks can't express
+/// that here today; they'd need to ship a renderable model.
 fn add_missing_blocks(palette: &mut HashMap<String, Rgba>) {
     info!("Adding missing common blocks");
 
@@ -185,27 +296,23 @@ fn add_missing_blocks(palette: &mut HashMap<String, Rgba>) {
     }
 }
 
-/// Add base colors for blocks that only have state variants
+/// Adds an unqualified `<ns>:<name>` entry for blocks that only have
+/// `<ns>:<name>|<state>` variants, for O(1) lookup fallback. Namespace-agnostic.
 fn add_base_colors(palette: &mut HashMap<String, Rgba>) {
     info!("Adding base colors for state variants");
 
     let mut blocks_with_states: HashMap<String, Vec<Rgba>> = HashMap::new();
     let mut blocks_without_states = std::collections::HashSet::new();
 
-    // Scan for state variants
     for (key, &color) in palette.iter() {
         if key.contains('|') {
             let base_name = key.split('|').next().unwrap().to_string();
-            blocks_with_states
-                .entry(base_name)
-                .or_default()
-                .push(color);
+            blocks_with_states.entry(base_name).or_default().push(color);
         } else {
             blocks_without_states.insert(key.clone());
         }
     }
 
-    // Add missing base blocks
     let mut added = 0;
     for (base_name, colors) in blocks_with_states {
         if !blocks_without_states.contains(&base_name) {
@@ -219,18 +326,18 @@ fn add_base_colors(palette: &mut HashMap<String, Rgba>) {
 
 pub fn execute(args: GenPaletteArgs) -> Result<()> {
     info!("Starting palette generation");
-    info!("Assets path: {}", args.assets.display());
+    info!("Packs ({}):", args.pack.len());
+    for p in &args.pack {
+        info!("  - {}", p.display());
+    }
     info!("Output: {}", args.output.display());
 
-    if !args.assets.exists() {
-        error!("Assets path does not exist: {}", args.assets.display());
-        return Err("Assets path not found".into());
-    }
-
-    // Load resources
-    let textures = load_textures(&args.assets.join("textures").join("block"))?;
-    let blockstates = load_blockstates(&args.assets.join("blockstates"))?;
-    let models = load_models(&args.assets.join("models").join("block"))?;
+    let pools = load_packs(&args.pack)?;
+    let Pools {
+        blockstates,
+        models,
+        textures,
+    } = pools;
 
     info!("Creating renderer");
     let mut renderer = Renderer::new(blockstates.clone(), models, textures.clone());
@@ -238,7 +345,10 @@ pub fn execute(args: GenPaletteArgs) -> Result<()> {
     let mut mapped = 0;
     let mut success = 0;
 
-    // Regex mappings for blocks that can't be rendered directly
+    // Vanilla-specific fallbacks: if the renderer can't handle a blockstate,
+    // try these regex→texture rewrites. The `minecraft:` prefix here is
+    // intentional — these are patches for known vanilla quirks. Mod blocks
+    // with similar quirks would need their own entries.
     let mappings = vec![
         RegexMapping {
             blockstate: Regex::new(r"minecraft:(.+)_fence").unwrap(),
@@ -356,24 +466,20 @@ pub fn execute(args: GenPaletteArgs) -> Result<()> {
         success, mapped, failed
     );
 
-    // 1.17 renamed grass_path to dirt_path. This hacks it back in for old region files.
+    // 1.17 renamed grass_path to dirt_path. Keep the old name working.
     if let Some(path) = palette.get("minecraft:dirt_path").cloned() {
         palette.insert("minecraft:grass_path".into(), path);
     }
 
-    // Add missing common blocks
     add_missing_blocks(&mut palette);
-
-    // Add base colors for state variants (for O(1) lookup)
     add_base_colors(&mut palette);
 
-    // Write palette.json
     info!("Writing palette to: {}", args.output.display());
     let file = std::fs::File::create(&args.output)?;
     serde_json::to_writer_pretty(file, &palette)?;
 
     info!(
-        "✓ Palette generation complete! {} total blocks written",
+        "\u{2713} Palette generation complete! {} total blocks written",
         palette.len()
     );
 
