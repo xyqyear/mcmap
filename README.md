@@ -58,6 +58,14 @@ mcmap render -r region.mca -p palette.json -o map.png
 
 # Stdout output (e.g. for Python/HTTP integration)
 mcmap render -r region.mca -p palette.json -o -
+
+# Split mode: save each region as its own PNG inside a directory
+# (names mirror the region's .mca file, e.g. r.0.0.mca -> r.0.0.png)
+mcmap render -r /world/region -p palette.json -o ./tiles --split
+
+# Copy each source .mca's mtime onto its PNG (only with --split).
+# Useful for incremental re-renders driven by file mtimes.
+mcmap render -r /world/region -p palette.json -o ./tiles --split --preserve-mtime
 ```
 
 ### `heightmap` - Render height-based heatmaps

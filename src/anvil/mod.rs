@@ -8,4 +8,4 @@ mod render;
 
 pub use chunk::HeightMode;
 pub use region::{CCoord, RCoord, RegionFileLoader};
-pub use render::{RenderedPalette, Rgba, TopShadeRenderer, render_region};
+pub use render::{RegionMap, RenderedPalette, Rgba, TopShadeRenderer, render_region};

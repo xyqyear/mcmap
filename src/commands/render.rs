@@ -6,9 +6,11 @@ use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 
 use crate::anvil::{
-    CCoord, HeightMode, RCoord, RegionFileLoader, RenderedPalette, Rgba, TopShadeRenderer,
-    render_region,
+    CCoord, HeightMode, RCoord, RegionFileLoader, RegionMap, RenderedPalette, Rgba,
+    TopShadeRenderer, render_region,
 };
+
+const REGION_PX: u32 = 32 * 16; // 512 px per region side
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -29,6 +31,16 @@ pub struct RenderArgs {
     /// Calculate heights instead of trusting heightmap data
     #[arg(long, default_value_t = false)]
     calculate_heights: bool,
+
+    /// Save each region as its own PNG inside --output (treated as a directory).
+    /// File names mirror the region's .mca name (e.g. r.0.0.mca -> r.0.0.png).
+    #[arg(long, default_value_t = false)]
+    split: bool,
+
+    /// Copy each source .mca file's modification time onto its generated PNG.
+    /// Only valid with --split (requires a 1:1 region-to-file mapping).
+    #[arg(long, default_value_t = false, requires = "split")]
+    preserve_mtime: bool,
 }
 
 #[derive(Debug)]
@@ -94,6 +106,33 @@ fn get_palette(path: &Path) -> Result<RenderedPalette> {
     Ok(RenderedPalette::new(blockstates))
 }
 
+/// Copy the modification time of `src` onto `dst`. Used so caches keyed on
+/// mtime can treat the rendered PNG as being "as fresh as" the source region.
+fn copy_mtime(src: &Path, dst: &Path) -> std::io::Result<()> {
+    let mtime = std::fs::metadata(src)?.modified()?;
+    let dst_file = std::fs::File::options().write(true).open(dst)?;
+    dst_file.set_modified(mtime)
+}
+
+/// Copy a rendered `RegionMap` into a freshly allocated 512×512 `RgbaImage`.
+fn region_to_image(map: &RegionMap) -> image::RgbaImage {
+    let mut img = image::RgbaImage::new(REGION_PX, REGION_PX);
+    for xc in 0..32 {
+        for zc in 0..32 {
+            let chunk = map.chunk(CCoord(xc), CCoord(zc));
+            for z in 0..16 {
+                for x in 0..16 {
+                    let pixel = chunk[z * 16 + x];
+                    let px = (xc as u32) * 16 + x as u32;
+                    let pz = (zc as u32) * 16 + z as u32;
+                    img.put_pixel(px, pz, image::Rgba(pixel));
+                }
+            }
+        }
+    }
+    img
+}
+
 pub fn execute(args: RenderArgs) -> Result<()> {
     let total_start = std::time::Instant::now();
 
@@ -101,7 +140,14 @@ pub fn execute(args: RenderArgs) -> Result<()> {
     info!("Region path: {}", args.region.display());
 
     let output_to_stdout = args.output == "-";
-    if output_to_stdout {
+    if args.split && output_to_stdout {
+        error!("--split cannot be combined with stdout output");
+        return Err("--split cannot be combined with stdout output".into());
+    }
+
+    if args.split {
+        info!("Output directory: {}", args.output);
+    } else if output_to_stdout {
         info!("Output: stdout");
     } else {
         info!("Output: {}", args.output);
@@ -168,6 +214,65 @@ pub fn execute(args: RenderArgs) -> Result<()> {
         return Err(format!("Invalid region path: {}", args.region.display()).into());
     };
 
+    let palette_start = std::time::Instant::now();
+    let pal = get_palette(&args.palette)?;
+    info!("⏱ Palette loading took: {:?}", palette_start.elapsed());
+
+    if args.split {
+        let out_dir = PathBuf::from(&args.output);
+        std::fs::create_dir_all(&out_dir)
+            .map_err(|e| format!("Failed to create output directory {}: {}", args.output, e))?;
+
+        info!("Rendering regions (split mode)...");
+        let render_start = std::time::Instant::now();
+        let saved: usize = coords
+            .into_par_iter()
+            .map(|(x, z)| {
+                let loader = RegionFileLoader::new(region_dir.clone());
+                let drawer = TopShadeRenderer::new(&pal, height_mode);
+                let src_path = region_dir.join(format!("r.{}.{}.mca", x.0, z.0));
+                match render_region(x, z, &loader, drawer) {
+                    Ok(Some(map)) => {
+                        let img = region_to_image(&map);
+                        let path = out_dir.join(format!("r.{}.{}.png", x.0, z.0));
+                        match img.save(&path) {
+                            Ok(()) => {
+                                if args.preserve_mtime {
+                                    if let Err(e) = copy_mtime(&src_path, &path) {
+                                        warn!(
+                                            "Saved {} but failed to copy mtime from {}: {}",
+                                            path.display(),
+                                            src_path.display(),
+                                            e
+                                        );
+                                    }
+                                }
+                                info!("Saved {}", path.display());
+                                1
+                            }
+                            Err(e) => {
+                                error!("Failed to save {}: {}", path.display(), e);
+                                0
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        warn!("Missing r.{}.{}.mca", x.0, z.0);
+                        0
+                    }
+                    Err(e) => {
+                        error!("Error processing r.{}.{}.mca: {}", x.0, z.0, e);
+                        0
+                    }
+                }
+            })
+            .sum();
+        info!("⏱ Region rendering took: {:?}", render_start.elapsed());
+        info!("{} regions saved to {}", saved, out_dir.display());
+        info!("⏱ Total time: {:?}", total_start.elapsed());
+        return Ok(());
+    }
+
     let bounds = auto_size(&coords).ok_or("Failed to calculate bounds")?;
     info!("Bounds: {:?}", bounds);
 
@@ -175,10 +280,6 @@ pub fn execute(args: RenderArgs) -> Result<()> {
     let z_range = bounds.zmin..bounds.zmax;
 
     let region_len: usize = 32 * 16; // 32 chunks per region, 16 blocks per chunk
-
-    let palette_start = std::time::Instant::now();
-    let pal = get_palette(&args.palette)?;
-    info!("⏱ Palette loading took: {:?}", palette_start.elapsed());
 
     info!("Rendering regions...");
     let render_start = std::time::Instant::now();
