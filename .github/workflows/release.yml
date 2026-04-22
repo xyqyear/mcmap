@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0). Must already exist in the repo, or will be created on the current commit."
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -14,63 +20,62 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - build: linux-gnu
-            os: ubuntu-latest
+          - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-
-          - build: linux-musl
-            os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-
-          - build: macos
-            os: macos-latest
-            target: aarch64-apple-darwin
-
-          - build: windows-msvc
-            os: windows-latest
+          - os: windows-latest
             target: x86_64-pc-windows-msvc
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Get the release version from the tag
+      - name: Resolve release tag
         shell: bash
-        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "TAG=${{ inputs.tag }}" >> "$GITHUB_ENV"
+          else
+            echo "TAG=${GITHUB_REF#refs/tags/}" >> "$GITHUB_ENV"
+          fi
 
-      - name: Install Rust
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Build
-        run: cargo build --verbose --release --target ${{ matrix.target }}
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
 
-      - name: Build archive
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package artifact
+        id: package
         shell: bash
         run: |
-          binary_name="${GITHUB_REPOSITORY##*/}"
-
-          dirname="$binary_name-${{ env.VERSION }}-${{ matrix.target }}"
+          project_name="${{ github.event.repository.name }}"
+          dirname="${project_name}-${TAG}-${{ matrix.target }}"
           mkdir "$dirname"
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            mv "target/${{ matrix.target }}/release/$binary_name.exe" "$dirname"
+
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            mv "target/${{ matrix.target }}/release/${project_name}.exe" "$dirname/"
+            7z a "${dirname}.zip" "$dirname" >/dev/null
+            echo "asset=${dirname}.zip" >> "$GITHUB_OUTPUT"
           else
-            mv "target/${{ matrix.target }}/release/$binary_name" "$dirname"
+            mv "target/${{ matrix.target }}/release/${project_name}" "$dirname/"
+            tar -czf "${dirname}.tar.gz" "$dirname"
+            echo "asset=${dirname}.tar.gz" >> "$GITHUB_OUTPUT"
           fi
 
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            7z a "$dirname.zip" "$dirname"
-            echo "ASSET=$dirname.zip" >> $GITHUB_ENV
-          else
-            tar -czf "$dirname.tar.gz" "$dirname"
-            echo "ASSET=$dirname.tar.gz" >> $GITHUB_ENV
-          fi
-
-      - name: Upload the binaries
+      - name: Create or update release and upload artifact
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            ${{ env.ASSET }}
+          tag_name: ${{ env.TAG }}
+          name: ${{ env.TAG }}
+          files: ${{ steps.package.outputs.asset }}
+          fail_on_unmatched_files: true
