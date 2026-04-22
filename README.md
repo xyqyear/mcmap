@@ -133,12 +133,23 @@ mcmap analyze -r /world/region -p palette.json --show-counts
 - Multiple packs can be layered, with the first-listed pack winning on conflict (list custom resource packs first, vanilla last).
 - Automatically adds missing common blocks (water, air, vine, grass, fern, etc.) and base colors for state variants (for O(1) lookup).
 
+**Resolution tiers** (first success wins per blockstate):
+
+1. Render the top face of the block's model (`fastanvil` renderer).
+2. Raw-model fallback: any face (`up`→`down`→sides) from the variant's model, from any other variant of the same block (preferring `upper`/`top` keys for tall plants and double slabs), or from the first `apply` model of a multipart blockstate.
+3. Regex rewrites — generic patterns (`*:*_fence` → `*:block/*_planks`, same for walls and fence gates) apply across any namespace; hardcoded vanilla quirks (crops at final stage, `fire_0`, `bamboo_stalk`) apply to `minecraft:` only.
+4. Texture-path probe — direct lookup of `<ns>:block/<name>` (or pre-1.13 `<ns>:blocks/<name>`).
+5. User overrides (`--overrides`) — final authoritative precedence.
+
+Transparent pixels are skipped when averaging RGB, so sparse textures (vines, fences, crops, rails) keep their real color instead of being pulled toward black.
+
 **Usage:**
 
 ```bash
 mcmap gen-palette --pack <PATH>... --output palette.json
-    -p <PATH>    repeatable; .jar/.zip file, or directory containing .jar/.zip files
-    -o <FILE>    output path (default: palette.json)
+    -p <PATH>           repeatable; .jar/.zip file, or directory containing .jar/.zip files
+    -o <FILE>           output path (default: palette.json)
+    --overrides <FILE>  optional JSON map of `"ns:id"` → `[r,g,b,a]`; applied last
 ```
 
 Typical vanilla JAR locations:
