@@ -28,7 +28,7 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fs::File;
-use std::io::Read;
+use std::io::{Cursor, Read, Seek};
 use std::path::{Path, PathBuf};
 use zip::ZipArchive;
 
@@ -114,6 +114,20 @@ struct RawModel {
     textures: Option<HashMap<String, String>>,
     #[serde(default)]
     elements: Option<Vec<RawElement>>,
+    /// Forge custom model loaders (e.g. `functionalstorage:framedblock`) skip
+    /// standard elements and put their per-face textures inside a `children`
+    /// map — one inner "sub-model" per component. We only capture enough to
+    /// pull texture refs out for the last-ditch any-texture fallback.
+    #[serde(default)]
+    children: Option<HashMap<String, RawChild>>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+struct RawChild {
+    #[serde(default)]
+    parent: Option<String>,
+    #[serde(default)]
+    textures: Option<HashMap<String, String>>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -231,13 +245,27 @@ fn expand_packs(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
 
 /// Read one archive, inserting every resource that isn't already present in
 /// the pools. First-wins semantics.
-fn load_archive(path: &Path, pools: &mut Pools) -> Result<()> {
-    let file = File::open(path)?;
-    let mut archive = ZipArchive::new(file)?;
+///
+/// Forge packs the extra mods they depend on as Jar-in-Jar (JIJ) entries under
+/// `META-INF/jarjar/*.jar`. Forge extracts those at runtime, so from the game's
+/// point of view the nested mod's assets are fully available. We do the same:
+/// after reading the outer archive's own assets, recurse into each nested jar
+/// with the same `pools` (so outer assets still win on conflict). Nested jars
+/// may themselves contain JIJ entries — recursion handles any depth.
+fn load_archive_from_reader<R: Read + Seek>(
+    label: &str,
+    reader: R,
+    pools: &mut Pools,
+) -> Result<()> {
+    let mut archive = ZipArchive::new(reader)?;
 
     let mut bs_added = 0usize;
     let mut m_added = 0usize;
     let mut t_added = 0usize;
+
+    // Defer nested jars so the outer archive's own assets are registered first
+    // (outer wins on conflict).
+    let mut nested_jars: Vec<(String, Vec<u8>)> = Vec::new();
 
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
@@ -245,6 +273,17 @@ fn load_archive(path: &Path, pools: &mut Pools) -> Result<()> {
             continue;
         }
         let name = entry.name().to_string();
+
+        if is_jarjar_entry(&name) {
+            let mut buf = Vec::new();
+            if let Err(e) = entry.read_to_end(&mut buf) {
+                debug!("Failed to read nested jar {}: {}", name, e);
+                continue;
+            }
+            nested_jars.push((name, buf));
+            continue;
+        }
+
         let Some((category, key)) = parse_entry(&name) else {
             continue;
         };
@@ -314,10 +353,44 @@ fn load_archive(path: &Path, pools: &mut Pools) -> Result<()> {
     }
 
     info!(
-        "  + {} blockstates, {} models, {} textures",
-        bs_added, m_added, t_added
+        "  [{}] + {} blockstates, {} models, {} textures",
+        label, bs_added, m_added, t_added
     );
+
+    for (entry_name, buf) in nested_jars {
+        let short = entry_name
+            .rsplit('/')
+            .next()
+            .unwrap_or(entry_name.as_str());
+        let nested_label = format!("{} > {}", label, short);
+        if let Err(e) = load_archive_from_reader(&nested_label, Cursor::new(buf), pools) {
+            warn!("Failed to load nested {}: {}", entry_name, e);
+        }
+    }
+
     Ok(())
+}
+
+/// True for JIJ entries — nested mod jars Forge (and friends) bundle under
+/// `META-INF/jarjar/`. Filters out the `metadata.json` sibling and any
+/// non-jar files sharing that directory.
+fn is_jarjar_entry(name: &str) -> bool {
+    name.starts_with("META-INF/jarjar/")
+        && name
+            .rsplit('.')
+            .next()
+            .map(|e| e.eq_ignore_ascii_case("jar"))
+            .unwrap_or(false)
+}
+
+fn load_archive(path: &Path, pools: &mut Pools) -> Result<()> {
+    let file = File::open(path)?;
+    let label = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("archive")
+        .to_string();
+    load_archive_from_reader(&label, file, pools)
 }
 
 fn load_packs(paths: &[PathBuf]) -> Result<Pools> {
@@ -390,6 +463,9 @@ fn flatten_raw_model(
         }
         if child.elements.is_some() {
             out.elements = child.elements;
+        }
+        if child.children.is_some() {
+            out.children = child.children;
         }
     }
 
@@ -467,13 +543,91 @@ fn first_model_name(spec: &RawVariantSpec) -> Option<&str> {
     }
 }
 
-/// Try to resolve a color for a blockstate using only raw-model access.
-/// Walks variants (preferring `upper`/`top` keys for tall/double blocks)
-/// and multipart parts (first part wins). Tries any renderable face.
+/// Fallback for block-entity models (signs, beds, chests, banners, Botania
+/// `buried_petals`/`floating_*` etc.): their `models/block/...json` has no
+/// `elements` because the geometry is drawn by a tile entity renderer at
+/// runtime. They do still declare a `particle` texture (the texture used for
+/// break particles) that's a sensible stand-in color — oak planks for most
+/// beds, magenta_wool for magenta buried petals.
+fn render_particle_texture(
+    model: &RawModel,
+    textures: &HashMap<String, Texture>,
+) -> Option<Texture> {
+    let tex_map = model.textures.as_ref()?;
+    let particle = tex_map.get("particle")?;
+    if particle.starts_with('#') {
+        return None; // unresolved reference
+    }
+    textures.get(&qualify(particle)).cloned()
+}
+
+/// Last-ditch fallback for Forge custom loaders (`functionalstorage:framedblock`,
+/// `minecraft:block` with only `children` etc.): scan every texture reference
+/// that appears anywhere in the model — direct `textures` map, child models'
+/// `textures` maps, and their flattened parent chains — and return the first
+/// one whose PNG is actually in the texture pool.
+fn render_any_texture_ref(
+    model: &RawModel,
+    raw_models: &HashMap<String, RawModel>,
+    textures: &HashMap<String, Texture>,
+) -> Option<Texture> {
+    // Preferred texture-map keys first (most likely to be the main face).
+    // Applied to both the root model's texture map and each child's.
+    let priority_keys = ["all", "side", "top", "front", "texture", "0"];
+
+    let scan_map = |map: &HashMap<String, String>| -> Option<Texture> {
+        for k in &priority_keys {
+            if let Some(v) = map.get(*k) {
+                if !v.starts_with('#') {
+                    if let Some(tex) = textures.get(&qualify(v)) {
+                        return Some(tex.clone());
+                    }
+                }
+            }
+        }
+        for (k, v) in map {
+            if k == "particle" || v.starts_with('#') {
+                continue; // particle handled by its own tier; skip refs
+            }
+            if let Some(tex) = textures.get(&qualify(v)) {
+                return Some(tex.clone());
+            }
+        }
+        None
+    };
+
+    if let Some(map) = &model.textures {
+        if let Some(tex) = scan_map(map) {
+            return Some(tex);
+        }
+    }
+    let children = model.children.as_ref()?;
+    for child in children.values() {
+        if let Some(parent) = &child.parent {
+            if let Some(flat) = flatten_raw_model(parent, raw_models) {
+                if let Some(map) = &flat.textures {
+                    if let Some(tex) = scan_map(map) {
+                        return Some(tex);
+                    }
+                }
+            }
+        }
+        if let Some(map) = &child.textures {
+            if let Some(tex) = scan_map(map) {
+                return Some(tex);
+            }
+        }
+    }
+    None
+}
+
+/// Walk variants (preferring `upper`/`top` keys for tall/double blocks) or
+/// multipart parts in a blockstate, flatten each referenced model, and hand
+/// the model to `choose`. First strategy-returned texture wins.
 fn render_any_variant_of_block(
     raw_bs: &RawBlockstate,
     raw_models: &HashMap<String, RawModel>,
-    textures: &HashMap<String, Texture>,
+    mut choose: impl FnMut(&RawModel) -> Option<Texture>,
 ) -> Option<Texture> {
     match raw_bs {
         RawBlockstate::Variants(vars) => {
@@ -494,7 +648,7 @@ fn render_any_variant_of_block(
                     continue;
                 };
                 if let Some(model) = flatten_raw_model(model_name, raw_models) {
-                    if let Some(tex) = render_any_face(&model, textures) {
+                    if let Some(tex) = choose(&model) {
                         return Some(tex);
                     }
                 }
@@ -507,7 +661,7 @@ fn render_any_variant_of_block(
                     continue;
                 };
                 if let Some(model) = flatten_raw_model(model_name, raw_models) {
-                    if let Some(tex) = render_any_face(&model, textures) {
+                    if let Some(tex) = choose(&model) {
                         return Some(tex);
                     }
                 }
@@ -533,6 +687,17 @@ fn probe_texture_by_name(
         }
     }
     None
+}
+
+/// Per-tier success counters. Used only for the final resolution summary.
+#[derive(Default)]
+struct Counters {
+    rendered: usize,
+    side_fallback: usize,
+    particle: usize,
+    any_texture: usize,
+    mapped: usize,
+    probed: usize,
 }
 
 #[derive(Debug)]
@@ -567,13 +732,22 @@ fn add_missing_blocks(palette: &mut HashMap<String, Rgba>) {
 
     let missing = vec![
         ("minecraft:air", [0, 0, 0, 0]),
+        ("minecraft:cave_air", [0, 0, 0, 0]),
+        ("minecraft:void_air", [0, 0, 0, 0]),
         ("minecraft:water", [63, 118, 228, 180]),
         ("minecraft:flowing_water", [63, 118, 228, 180]),
+        ("minecraft:bubble_column", [63, 118, 228, 180]),
         ("minecraft:lava", [207, 78, 0, 255]),
         ("minecraft:flowing_lava", [207, 78, 0, 255]),
         ("minecraft:vine", [106, 136, 44, 200]),
         ("minecraft:grass", [124, 189, 107, 255]),
         ("minecraft:fern", [104, 149, 92, 255]),
+        // Technical / admin blocks that are invisible in-world but still
+        // appear as palette entries the chunk may query.
+        ("minecraft:barrier", [0, 0, 0, 0]),
+        ("minecraft:moving_piston", [0, 0, 0, 0]),
+        ("minecraft:light", [0, 0, 0, 0]),
+        ("minecraft:structure_void", [0, 0, 0, 0]),
     ];
 
     for (name, color) in missing {
@@ -641,10 +815,7 @@ pub fn execute(args: GenPaletteArgs) -> Result<()> {
 
     info!("Creating renderer");
     let mut renderer = Renderer::new(blockstates.clone(), models, textures.clone());
-    let mut success = 0usize;
-    let mut side_fallback = 0usize;
-    let mut mapped = 0usize;
-    let mut probed = 0usize;
+    let mut counters = Counters::default();
     let mut failed = 0usize;
 
     // Regex rewrites for block IDs the renderer can't resolve.
@@ -716,28 +887,46 @@ pub fn execute(args: GenPaletteArgs) -> Result<()> {
 
     let mut palette: HashMap<String, Rgba> = HashMap::new();
 
-    // Tiered resolver: tries fastanvil → raw-model side-face → regex rewrites
-    // → texture-path probe, in that order. Returns None only if every tier
-    // fails.
+    // Tiered resolver: tries fastanvil → raw-model side-face → particle-only
+    // → any-texture-ref (custom loaders) → regex rewrites → texture-path probe,
+    // in that order. Returns None only if every tier fails.
     let try_resolve = |name: &str,
                        props: Option<&str>,
                        renderer: &mut Renderer,
-                       success: &mut usize,
-                       side_fallback: &mut usize,
-                       mapped: &mut usize,
-                       probed: &mut usize|
+                       c: &mut Counters|
      -> Option<Rgba> {
         // Tier 0: fastanvil renderer on the exact variant.
         if let Some(p) = props {
             if let Ok(tex) = renderer.get_top(name, p) {
-                *success += 1;
+                c.rendered += 1;
                 return Some(avg_colour(&tex));
             }
         }
-        // Tier 1: any-face / any-variant / multipart from raw models.
         if let Some(raw_bs) = raw_blockstates.get(name) {
-            if let Some(tex) = render_any_variant_of_block(raw_bs, &raw_models, &textures) {
-                *side_fallback += 1;
+            // Tier 1: any-face across variants / multipart parts.
+            if let Some(tex) = render_any_variant_of_block(raw_bs, &raw_models, |m| {
+                render_any_face(m, &textures)
+            }) {
+                c.side_fallback += 1;
+                return Some(avg_colour(&tex));
+            }
+            // Tier 1.5: models without `elements` (signs, beds, chests,
+            // banners, heads, Botania buried_petals/floating_*, …) still
+            // declare a `particle` texture Mojang picks to match the break
+            // particle. Use that as the block color.
+            if let Some(tex) = render_any_variant_of_block(raw_bs, &raw_models, |m| {
+                render_particle_texture(m, &textures)
+            }) {
+                c.particle += 1;
+                return Some(avg_colour(&tex));
+            }
+            // Tier 1.7: Forge custom loaders (functionalstorage:framedblock,
+            // framedblocks, etc.) skip `elements` entirely. Fall back to any
+            // texture ref anywhere in the model + its children.
+            if let Some(tex) = render_any_variant_of_block(raw_bs, &raw_models, |m| {
+                render_any_texture_ref(m, &raw_models, &textures)
+            }) {
+                c.any_texture += 1;
                 return Some(avg_colour(&tex));
             }
         }
@@ -746,7 +935,7 @@ pub fn execute(args: GenPaletteArgs) -> Result<()> {
             if let Some(tex_name) = mapping.apply(name) {
                 if let Some(tex) = textures.get(&tex_name) {
                     debug!("Regex mapped {} → {}", name, tex_name);
-                    *mapped += 1;
+                    c.mapped += 1;
                     return Some(avg_colour(tex));
                 }
             }
@@ -754,7 +943,7 @@ pub fn execute(args: GenPaletteArgs) -> Result<()> {
         // Tier 3: direct texture-path probe by block name.
         if let Some(tex) = probe_texture_by_name(name, &textures) {
             debug!("Probed texture for {}", name);
-            *probed += 1;
+            c.probed += 1;
             return Some(avg_colour(&tex));
         }
         None
@@ -771,15 +960,9 @@ pub fn execute(args: GenPaletteArgs) -> Result<()> {
                 for props in vars.keys() {
                     let description =
                         name.clone() + if props.is_empty() { "" } else { "|" } + props;
-                    if let Some(col) = try_resolve(
-                        name,
-                        Some(props),
-                        &mut renderer,
-                        &mut success,
-                        &mut side_fallback,
-                        &mut mapped,
-                        &mut probed,
-                    ) {
+                    if let Some(col) =
+                        try_resolve(name, Some(props), &mut renderer, &mut counters)
+                    {
                         palette.insert(description, col);
                     } else {
                         warn!("Could not resolve: {}", description);
@@ -790,15 +973,7 @@ pub fn execute(args: GenPaletteArgs) -> Result<()> {
             Blockstate::Multipart(_) => {
                 // fastanvil can't render multipart; go straight to raw-model
                 // fallback (tier 1+) via `try_resolve` with props=None.
-                if let Some(col) = try_resolve(
-                    name,
-                    None,
-                    &mut renderer,
-                    &mut success,
-                    &mut side_fallback,
-                    &mut mapped,
-                    &mut probed,
-                ) {
+                if let Some(col) = try_resolve(name, None, &mut renderer, &mut counters) {
                     palette.insert(name.clone(), col);
                 } else {
                     warn!("Could not resolve multipart: {}", name);
@@ -809,8 +984,14 @@ pub fn execute(args: GenPaletteArgs) -> Result<()> {
     }
 
     info!(
-        "Resolved: {} rendered, {} side/multipart, {} regex, {} probed, {} failed",
-        success, side_fallback, mapped, probed, failed
+        "Resolved: {} rendered, {} side/multipart, {} particle, {} any-texture, {} regex, {} probed, {} failed",
+        counters.rendered,
+        counters.side_fallback,
+        counters.particle,
+        counters.any_texture,
+        counters.mapped,
+        counters.probed,
+        failed
     );
 
     // 1.17 renamed grass_path to dirt_path. Keep the old name working.
