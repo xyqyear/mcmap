@@ -79,6 +79,13 @@ impl RegionMap {
         let begin = (z.0 * 32 + x.0) as usize * len;
         &mut self.data[begin..begin + len]
     }
+
+    /// Public alias for `chunk_mut` — used by the legacy renderer in a
+    /// sibling module. Name-mangled to avoid exposing the private
+    /// `chunk_mut` directly.
+    pub fn chunk_mut_by_coord(&mut self, x: CCoord, z: CCoord) -> &mut [Rgba] {
+        self.chunk_mut(x, z)
+    }
 }
 
 /// Top-down renderer with shading

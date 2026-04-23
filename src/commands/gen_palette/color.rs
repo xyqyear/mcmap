@@ -6,7 +6,7 @@ use fastanvil::Rgba;
 /// their transparent background. Alpha is averaged over all pixels, so
 /// coverage is preserved in the output alpha channel.
 /// Uses quadratic mean (RMS) for perceptually better mixing.
-pub(super) fn avg_colour(rgba_data: &[u8]) -> Rgba {
+pub fn avg_colour(rgba_data: &[u8]) -> Rgba {
     let mut rgb = [0f64; 3];
     let mut alpha_sq = 0f64;
     let mut total = 0usize;

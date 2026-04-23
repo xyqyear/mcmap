@@ -1,10 +1,25 @@
-// Render command - converts MCA files to PNG overhead maps
+// Render command — converts MCA files to PNG overhead maps.
+//
+// Auto-detects the palette format and dispatches between the two chunk
+// codecs:
+//
+//   - Modern (1.13+): flat `{"namespace:name": [r,g,b,a]}` palette, parsed by
+//     `fastanvil`.
+//   - Legacy (1.7.10, optionally with NotEnoughIDs): wrapped
+//     `{"format":"1.7.10","blocks":{"id|meta":[...]}}` palette, parsed by
+//     the `anvil::legacy` module.
+//
+// Dispatch is at the per-chunk level so a world where only some sections
+// use legacy storage still works — though in practice a palette is tied to
+// a world and all its chunks are the same era.
 
 use clap::Args;
 use log::{error, info, warn};
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 
+use crate::anvil::legacy::{LegacyPalette, LegacyTopShadeRenderer, render_legacy_region};
+use crate::anvil::legacy::palette::{PaletteFormat, detect_palette_format};
 use crate::anvil::{
     CCoord, HeightMode, RCoord, RegionFileLoader, RegionMap, RenderedPalette, Rgba,
     TopShadeRenderer, render_region,
@@ -24,11 +39,11 @@ pub struct RenderArgs {
     #[arg(short, long, default_value = "map.png")]
     output: String,
 
-    /// Path to the palette.tar.gz file
+    /// Path to the palette.json file
     #[arg(short, long)]
     palette: PathBuf,
 
-    /// Calculate heights instead of trusting heightmap data
+    /// Calculate heights instead of trusting heightmap data (modern only)
     #[arg(long, default_value_t = false)]
     calculate_heights: bool,
 
@@ -49,6 +64,13 @@ struct Rectangle {
     xmax: RCoord,
     zmin: RCoord,
     zmax: RCoord,
+}
+
+/// Opaque palette holder — lets us carry both variants through the render
+/// pipeline without loading both unconditionally.
+enum AnyPalette {
+    Modern(RenderedPalette),
+    Legacy(LegacyPalette),
 }
 
 fn parse_region_filename(filename: &str) -> Option<(RCoord, RCoord)> {
@@ -89,21 +111,25 @@ fn auto_size(coords: &[(RCoord, RCoord)]) -> Option<Rectangle> {
     Some(bounds)
 }
 
-fn get_palette(path: &Path) -> Result<RenderedPalette> {
+fn load_palette(path: &Path) -> Result<AnyPalette> {
     info!("Loading palette from: {}", path.display());
-
-    // Reading the file into memory then parsing via `from_slice` is much
-    // faster than `serde_json::from_reader`, which does unbuffered,
-    // byte-at-a-time reads from the File handle.
-    let bytes = std::fs::read(path)?;
-    let blockstates: std::collections::HashMap<String, Rgba> = serde_json::from_slice(&bytes)?;
-
-    info!(
-        "Palette loaded successfully: {} block states",
-        blockstates.len()
-    );
-
-    Ok(RenderedPalette::new(blockstates))
+    match detect_palette_format(path)? {
+        PaletteFormat::Modern => {
+            let bytes = std::fs::read(path)?;
+            let blockstates: std::collections::HashMap<String, Rgba> =
+                serde_json::from_slice(&bytes)?;
+            info!(
+                "Palette loaded: {} block states (modern / 1.13+)",
+                blockstates.len()
+            );
+            Ok(AnyPalette::Modern(RenderedPalette::new(blockstates)))
+        }
+        PaletteFormat::Legacy => {
+            let pal = LegacyPalette::load(path)?;
+            info!("Palette loaded: {} entries (legacy / 1.7.10)", pal.len());
+            Ok(AnyPalette::Legacy(pal))
+        }
+    }
 }
 
 /// Copy the modification time of `src` onto `dst`. Used so caches keyed on
@@ -131,6 +157,26 @@ fn region_to_image(map: &RegionMap) -> image::RgbaImage {
         }
     }
     img
+}
+
+/// Render one region using whichever path the palette requires.
+fn render_one(
+    x: RCoord,
+    z: RCoord,
+    loader: &dyn crate::anvil::region::RegionLoader,
+    pal: &AnyPalette,
+    height_mode: HeightMode,
+) -> Result<Option<RegionMap>> {
+    match pal {
+        AnyPalette::Modern(p) => {
+            let drawer = TopShadeRenderer::new(p, height_mode);
+            Ok(render_region(x, z, loader, drawer)?)
+        }
+        AnyPalette::Legacy(p) => {
+            let drawer = LegacyTopShadeRenderer::new(p);
+            Ok(render_legacy_region(x, z, loader, drawer)?)
+        }
+    }
 }
 
 pub fn execute(args: RenderArgs) -> Result<()> {
@@ -215,7 +261,7 @@ pub fn execute(args: RenderArgs) -> Result<()> {
     };
 
     let palette_start = std::time::Instant::now();
-    let pal = get_palette(&args.palette)?;
+    let pal = load_palette(&args.palette)?;
     info!("⏱ Palette loading took: {:?}", palette_start.elapsed());
 
     if args.split {
@@ -229,9 +275,8 @@ pub fn execute(args: RenderArgs) -> Result<()> {
             .into_par_iter()
             .map(|(x, z)| {
                 let loader = RegionFileLoader::new(region_dir.clone());
-                let drawer = TopShadeRenderer::new(&pal, height_mode);
                 let src_path = region_dir.join(format!("r.{}.{}.mca", x.0, z.0));
-                match render_region(x, z, &loader, drawer) {
+                match render_one(x, z, &loader, &pal, height_mode) {
                     Ok(Some(map)) => {
                         let img = region_to_image(&map);
                         let path = out_dir.join(format!("r.{}.{}.png", x.0, z.0));
@@ -289,8 +334,7 @@ pub fn execute(args: RenderArgs) -> Result<()> {
             let loader = RegionFileLoader::new(region_dir.clone());
 
             if x < x_range.end && x >= x_range.start && z < z_range.end && z >= z_range.start {
-                let drawer = TopShadeRenderer::new(&pal, height_mode);
-                let map = render_region(x, z, &loader, drawer);
+                let map = render_one(x, z, &loader, &pal, height_mode);
                 match map {
                     Ok(Some(map)) => {
                         info!("Processed r.{}.{}.mca", x.0, z.0);

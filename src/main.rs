@@ -24,8 +24,12 @@ enum Commands {
     /// Analyze blocks in region files and find unknown blocks
     Analyze(commands::analyze::AnalyzeArgs),
 
-    /// Generate palette.json from Minecraft JAR assets
+    /// Generate palette.json from Minecraft JAR assets (1.13+)
     GenPalette(commands::gen_palette::GenPaletteArgs),
+
+    /// Generate palette.json for a pre-1.13 world (1.7.10, optionally NEID).
+    /// Requires the world's level.dat and the mod jars loaded in that world.
+    GenPaletteLegacy(commands::gen_palette_legacy::GenPaletteLegacyArgs),
 }
 
 fn main() -> Result<()> {
@@ -40,5 +44,6 @@ fn main() -> Result<()> {
         Commands::Heightmap(args) => commands::heightmap::execute(args),
         Commands::Analyze(args) => commands::analyze::execute(args),
         Commands::GenPalette(args) => commands::gen_palette::execute(args),
+        Commands::GenPaletteLegacy(args) => commands::gen_palette_legacy::execute(args),
     }
 }

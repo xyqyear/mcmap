@@ -16,7 +16,7 @@
 //   4. user overrides JSON (`--overrides`) — final authoritative precedence,
 //      applied after all automatic resolution.
 
-mod color;
+pub(crate) mod color;
 mod packs;
 mod postprocess;
 mod raw;

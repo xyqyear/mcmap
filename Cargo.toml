@@ -7,6 +7,7 @@ edition = "2024"
 clap = { version = "4.5.50", features = ["derive"] }
 env_logger = "0.11.8"
 fastanvil = "0.32.0"
+fastnbt = "2.6.1"
 flate2 = { version = "1.1.5", default-features = false, features = ["zlib-rs"] }
 image = "0.23"
 log = "0.4.28"
