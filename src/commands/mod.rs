@@ -2,7 +2,6 @@
 
 pub mod analyze;
 pub mod gen_palette;
-pub mod heightmap;
 pub mod render;
 pub mod util;
 

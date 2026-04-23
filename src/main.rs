@@ -19,9 +19,6 @@ enum Commands {
     /// (modern 1.13+, legacy 1.7.10, or Forge 1.12.2 REI).
     Render(commands::render::RenderArgs),
 
-    /// Render region files as height-based heatmaps. 1.13+ only.
-    Heightmap(commands::heightmap::HeightmapArgs),
-
     /// Analyze blocks in region files and find unknown blocks. 1.13+ only.
     Analyze(commands::analyze::AnalyzeArgs),
 
@@ -38,7 +35,6 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Render(args) => commands::render::execute(args),
-        Commands::Heightmap(args) => commands::heightmap::execute(args),
         Commands::Analyze(args) => commands::analyze::execute(args),
         Commands::GenPalette(args) => commands::gen_palette::execute(args),
     }

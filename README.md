@@ -20,9 +20,6 @@ cargo build --release
 # Render a map (using block colors)
 mcmap render --region r.0.0.mca --palette palette.json --output map.png
 
-# Render a heightmap (color-coded by elevation)
-mcmap heightmap --region r.0.0.mca --output heightmap.png
-
 # Analyze blocks
 mcmap analyze --region /world/region --palette palette.json --show-counts
 
@@ -37,12 +34,6 @@ mcmap gen-palette modern -p /path/to/1.20.1.jar --output palette.json
 Renders blocks with their actual colors from the palette:
 
 ![Render Example](readme-assets/render_example.png)
-
-### Heightmap Visualization
-
-Color-coded by elevation (default gradient: black → blue → green → red):
-
-![Heightmap Example](readme-assets/heightmap_example.png)
 
 ## Commands
 
@@ -68,58 +59,6 @@ mcmap render -r /world/region -p palette.json -o ./tiles --split
 # Useful for incremental re-renders driven by file mtimes.
 mcmap render -r /world/region -p palette.json -o ./tiles --split --preserve-mtime
 ```
-
-### `heightmap` - Render height-based heatmaps
-
-Generates color-coded elevation maps from region files, where colors represent terrain height.
-
-**Features:**
-
-- Two height modes:
-  - **Trust heightmap** (default): Uses pre-computed heightmap data from chunks for fast rendering
-  - **Calculate heights** (`--calculate-heights`): Scans all blocks to find surface height (slower but more accurate)
-- Linear interpolation between color points for smooth gradients
-- Custom color mapping support via JSON
-- Parallel processing for multiple regions
-- Output to file or stdout
-
-**Default color mapping:**
-
-- `-64` (bedrock level): Black
-- `0` (sea level): Blue
-- `128`: Green
-- `255` (old build height): Red
-
-**Basic usage:**
-
-```bash
-# Single region file with default colors
-mcmap heightmap -r r.0.0.mca -o heightmap.png
-
-# Entire region directory
-mcmap heightmap -r /world/region -o heightmap.png
-
-# Calculate heights instead of trusting heightmap data
-mcmap heightmap -r r.0.0.mca -o heightmap.png --calculate-heights
-
-# Output to stdout
-mcmap heightmap -r r.0.0.mca -o -
-```
-
-**Custom color mapping:**
-
-```bash
-# Custom gradient: deep blue (-64) -> cyan (0) -> yellow (128) -> red (255)
-mcmap heightmap -r r.0.0.mca -o heightmap.png \
-  --colors '[[-64,0,0,139,255],[0,0,255,255,255],[128,255,255,0,255],[255,255,0,0,255]]'
-```
-
-Color format: `[[height, r, g, b, a], ...]`
-
-- Each point defines a height and its corresponding RGBA color
-- Heights between points use linear interpolation
-- Must have at least one color point
-- Points are automatically sorted by height
 
 ### `analyze` - Find unknown blocks
 
@@ -243,7 +182,7 @@ Same fallback-gray caveat as `gen-palette legacy` — use `--overrides` to pin s
 
 ## External Stdout Integration
 
-Both `render` and `heightmap` commands support stdout output for integration with web frameworks and other tools.
+The `render` command supports stdout output for integration with web frameworks and other tools.
 
 ```python
 import subprocess
@@ -266,8 +205,6 @@ return send_file(BytesIO(png_data), mimetype='image/png')
 Performance benchmarks on a 512×512 region:
 
 - **Render**: ~470ms (includes block color lookup)
-- **Heightmap** (trust mode): ~210ms (uses existing heightmap data in the region file)
-- **Heightmap** (calculate mode): ~330ms (scans all blocks)
 
 ## License
 

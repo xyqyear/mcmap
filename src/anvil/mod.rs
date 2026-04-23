@@ -18,7 +18,7 @@ pub mod pipeline;
 pub mod region;
 
 pub use palette::AnyPalette;
-pub use pipeline::{RegionMap, RenderEngine, Rgba, render_region};
+pub use pipeline::{RegionMap, Rgba, render_region};
 pub use region::{CCoord, RCoord, RegionFileLoader};
 
 // Re-exports for common modern-path usage from other commands.

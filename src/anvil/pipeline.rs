@@ -48,14 +48,6 @@ impl RegionMap {
 pub trait RenderEngine {
     type Chunk;
 
-    /// Whether this engine needs the row of chunks from the region above
-    /// seeded into the cache before the main loop. `true` for renderers that
-    /// do top-shading across region boundaries; `false` for engines like
-    /// heightmap rendering that only look at the current chunk. Skipping the
-    /// extra region read matters for modern-only paths that want zero
-    /// overhead from the abstraction.
-    const NEEDS_NORTH_CACHE: bool = true;
-
     /// Parse a chunk's decompressed NBT bytes into the engine's chunk shape.
     /// Returning `Ok(None)` signals "treat as empty" (used when the engine
     /// wants to skip a malformed chunk without failing the whole region).
@@ -89,18 +81,16 @@ pub fn render_region<E: RenderEngine>(
 
     // North-row cache: for top-shading continuity across the region boundary,
     // seed the "previous chunk" row with the southmost row of the region above.
-    // Skipped for engines that don't look at the neighbour chunk — the cache
-    // still holds chunks from within the current region for per-row chaining.
+    // The cache also holds chunks from within the current region for per-row
+    // chaining.
     let mut cache: [Option<E::Chunk>; 32] = Default::default();
-    if E::NEEDS_NORTH_CACHE {
-        if let Ok(Some(mut r)) = loader.region(x, RCoord(z.0 - 1)) {
-            for (cx, entry) in cache.iter_mut().enumerate() {
-                *entry = r
-                    .read_chunk(cx, 31)
-                    .ok()
-                    .flatten()
-                    .and_then(|b| engine.decode(&b).ok().flatten());
-            }
+    if let Ok(Some(mut r)) = loader.region(x, RCoord(z.0 - 1)) {
+        for (cx, entry) in cache.iter_mut().enumerate() {
+            *entry = r
+                .read_chunk(cx, 31)
+                .ok()
+                .flatten()
+                .and_then(|b| engine.decode(&b).ok().flatten());
         }
     }
 
