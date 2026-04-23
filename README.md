@@ -42,14 +42,10 @@ Renders blocks with their actual colors from the palette:
 - Supports **1.13+** chunk format (fastanvil), **1.7.10** (with optional NotEnoughIDs extended block IDs), and **Forge 1.12.2** (with RoughlyEnoughIDs / JustEnoughIDs per-section palette format)
 - Auto-detects the palette format — modern palette routes through the 1.13+ pipeline, `"format":"1.7.10"` triggers the 1.7.10 legacy path, `"format":"1.12.2"` triggers the REI/JEID legacy path
 - Parallel processing for multiple regions
-- Output to file or stdout (for HTTP APIs)
 
 ```bash
 # Basic rendering
 mcmap render -r region.mca -p palette.json -o map.png
-
-# Stdout output (e.g. for Python/HTTP integration)
-mcmap render -r region.mca -p palette.json -o -
 
 # Split mode: save each region as its own PNG inside a directory
 # (names mirror the region's .mca file, e.g. r.0.0.mca -> r.0.0.png)
@@ -179,26 +175,6 @@ mcmap render -r /path/to/world/region -p nova-palette.json -o map.png
 ```
 
 Same fallback-gray caveat as `gen-palette legacy` — use `--overrides` to pin specific blocks.
-
-## External Stdout Integration
-
-The `render` command supports stdout output for integration with web frameworks and other tools.
-
-```python
-import subprocess
-
-# Render block-colored map and get PNG data
-result = subprocess.run(
-    ["mcmap", "render", "-r", "region.mca", "-p", "palette.json", "-o", "-"],
-    stdout=subprocess.PIPE
-)
-png_data = result.stdout
-
-# Use in Flask/FastAPI
-from flask import send_file
-from io import BytesIO
-return send_file(BytesIO(png_data), mimetype='image/png')
-```
 
 ## Performance
 

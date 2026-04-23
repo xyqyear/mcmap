@@ -27,9 +27,9 @@ pub struct RenderArgs {
     #[arg(short, long)]
     region: PathBuf,
 
-    /// Output PNG file path (use '-' for stdout)
+    /// Output PNG file path
     #[arg(short, long, default_value = "map.png")]
-    output: String,
+    output: PathBuf,
 
     /// Path to the palette.json file
     #[arg(short, long)]
@@ -103,18 +103,10 @@ pub fn execute(args: RenderArgs) -> Result<()> {
     info!("Starting Minecraft map renderer");
     info!("Region path: {}", args.region.display());
 
-    let output_to_stdout = args.output == "-";
-    if args.split && output_to_stdout {
-        error!("--split cannot be combined with stdout output");
-        return Err("--split cannot be combined with stdout output".into());
-    }
-
     if args.split {
-        info!("Output directory: {}", args.output);
-    } else if output_to_stdout {
-        info!("Output: stdout");
+        info!("Output directory: {}", args.output.display());
     } else {
-        info!("Output: {}", args.output);
+        info!("Output: {}", args.output.display());
     }
 
     let height_mode = if args.calculate_heights {
@@ -177,9 +169,10 @@ pub fn execute(args: RenderArgs) -> Result<()> {
     info!("⏱ Palette loading took: {:?}", palette_start.elapsed());
 
     if args.split {
-        let out_dir = PathBuf::from(&args.output);
-        std::fs::create_dir_all(&out_dir)
-            .map_err(|e| format!("Failed to create output directory {}: {}", args.output, e))?;
+        let out_dir = args.output.clone();
+        std::fs::create_dir_all(&out_dir).map_err(|e| {
+            format!("Failed to create output directory {}: {}", out_dir.display(), e)
+        })?;
 
         info!("Rendering regions (split mode)...");
         let render_start = std::time::Instant::now();
@@ -305,15 +298,9 @@ pub fn execute(args: RenderArgs) -> Result<()> {
     }
     info!("⏱ Image assembly took: {:?}", assemble_start.elapsed());
 
-    if output_to_stdout {
-        info!("Writing image to stdout");
-        super::save_png(img, "-")?;
-        info!("Image written to stdout successfully");
-    } else {
-        info!("Saving image to: {}", args.output);
-        super::save_png(img, &args.output)?;
-        info!("Done! Map saved successfully.");
-    }
+    info!("Saving image to: {}", args.output.display());
+    img.save(&args.output)?;
+    info!("Done! Map saved successfully.");
     info!("⏱ Total time: {:?}", total_start.elapsed());
 
     Ok(())
