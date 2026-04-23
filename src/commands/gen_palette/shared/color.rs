@@ -1,11 +1,12 @@
 use fastanvil::Rgba;
 
-/// Averages a raw RGBA image into a single color.
-/// RGB is averaged only over pixels with alpha > 0 — this prevents sparse
-/// textures (vines, fences, crops, fire) from being washed toward black by
-/// their transparent background. Alpha is averaged over all pixels, so
-/// coverage is preserved in the output alpha channel.
-/// Uses quadratic mean (RMS) for perceptually better mixing.
+/// Average a raw RGBA image down to a single color.
+///
+/// RGB is averaged only over pixels with alpha > 0, so sparse textures
+/// (vines, fences, crops, fire) don't get washed toward black by their
+/// transparent background. Alpha is averaged over *all* pixels so coverage
+/// is preserved. Quadratic mean (RMS) is used for perceptually better
+/// mixing.
 pub fn avg_colour(rgba_data: &[u8]) -> Rgba {
     let mut rgb = [0f64; 3];
     let mut alpha_sq = 0f64;

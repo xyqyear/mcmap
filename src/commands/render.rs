@@ -1,28 +1,20 @@
-// Render command — converts MCA files to PNG overhead maps.
+// Render command — converts .mca region files to PNG overhead maps.
 //
-// Auto-detects the palette format and dispatches between the two chunk
-// codecs:
-//
-//   - Modern (1.13+): flat `{"namespace:name": [r,g,b,a]}` palette, parsed by
-//     `fastanvil`.
-//   - Legacy (1.7.10, optionally with NotEnoughIDs): wrapped
-//     `{"format":"1.7.10","blocks":{"id|meta":[...]}}` palette, parsed by
-//     the `anvil::legacy` module.
-//
-// Dispatch is at the per-chunk level so a world where only some sections
-// use legacy storage still works — though in practice a palette is tied to
-// a world and all its chunks are the same era.
+// Dispatch is implicit: `anvil::palette::load` detects the palette format
+// and returns an `AnyPalette` variant; for each region we build the matching
+// engine (modern / legacy) and feed it to the shared `render_region`
+// pipeline. One code path, one set of bounds / parallelism / I/O logic.
 
 use clap::Args;
 use log::{error, info, warn};
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 
-use crate::anvil::legacy::{LegacyPalette, LegacyTopShadeRenderer, render_legacy_region};
-use crate::anvil::legacy::palette::{PaletteFormat, detect_palette_format};
+use super::util::{Rectangle, auto_size, parse_region_filename};
+use crate::anvil::legacy::LegacyTopShadeRenderer;
 use crate::anvil::{
-    CCoord, HeightMode, RCoord, RegionFileLoader, RegionMap, RenderedPalette, Rgba,
-    TopShadeRenderer, render_region,
+    AnyPalette, CCoord, HeightMode, RCoord, RegionFileLoader, RegionMap, TopShadeRenderer,
+    palette, region::RegionLoader, render_region,
 };
 
 const REGION_PX: u32 = 32 * 16; // 512 px per region side
@@ -58,91 +50,6 @@ pub struct RenderArgs {
     preserve_mtime: bool,
 }
 
-#[derive(Debug)]
-struct Rectangle {
-    xmin: RCoord,
-    xmax: RCoord,
-    zmin: RCoord,
-    zmax: RCoord,
-}
-
-/// Opaque palette holder — lets us carry both variants through the render
-/// pipeline without loading both unconditionally. The `Legacy` arm carries
-/// the on-disk format tag (1.7.10 vs 1.12.2 REI) so the chunk decoder picks
-/// the right parser.
-enum AnyPalette {
-    Modern(RenderedPalette),
-    Legacy(LegacyPalette, PaletteFormat),
-}
-
-fn parse_region_filename(filename: &str) -> Option<(RCoord, RCoord)> {
-    // Expected format: r.X.Z.mca
-    let parts: Vec<&str> = filename.split('.').collect();
-    if parts.len() != 4 || parts[0] != "r" || parts[3] != "mca" {
-        return None;
-    }
-
-    let x: isize = parts[1].parse().ok()?;
-    let z: isize = parts[2].parse().ok()?;
-    Some((RCoord(x), RCoord(z)))
-}
-
-fn auto_size(coords: &[(RCoord, RCoord)]) -> Option<Rectangle> {
-    if coords.is_empty() {
-        return None;
-    }
-
-    let mut bounds = Rectangle {
-        xmin: RCoord(isize::MAX),
-        zmin: RCoord(isize::MAX),
-        xmax: RCoord(isize::MIN),
-        zmax: RCoord(isize::MIN),
-    };
-
-    for coord in coords {
-        bounds.xmin = std::cmp::min(bounds.xmin, coord.0);
-        bounds.xmax = std::cmp::max(bounds.xmax, coord.0);
-        bounds.zmin = std::cmp::min(bounds.zmin, coord.1);
-        bounds.zmax = std::cmp::max(bounds.zmax, coord.1);
-    }
-
-    // Add 1 to max bounds to make the range inclusive
-    bounds.xmax = RCoord(bounds.xmax.0 + 1);
-    bounds.zmax = RCoord(bounds.zmax.0 + 1);
-
-    Some(bounds)
-}
-
-fn load_palette(path: &Path) -> Result<AnyPalette> {
-    info!("Loading palette from: {}", path.display());
-    let format = detect_palette_format(path)?;
-    match format {
-        PaletteFormat::Modern => {
-            let bytes = std::fs::read(path)?;
-            let blockstates: std::collections::HashMap<String, Rgba> =
-                serde_json::from_slice(&bytes)?;
-            info!(
-                "Palette loaded: {} block states (modern / 1.13+)",
-                blockstates.len()
-            );
-            Ok(AnyPalette::Modern(RenderedPalette::new(blockstates)))
-        }
-        PaletteFormat::Legacy17 => {
-            let pal = LegacyPalette::load(path)?;
-            info!("Palette loaded: {} entries (legacy / 1.7.10)", pal.len());
-            Ok(AnyPalette::Legacy(pal, format))
-        }
-        PaletteFormat::Forge112 => {
-            let pal = LegacyPalette::load(path)?;
-            info!(
-                "Palette loaded: {} entries (legacy / Forge 1.12.2 + REI)",
-                pal.len()
-            );
-            Ok(AnyPalette::Legacy(pal, format))
-        }
-    }
-}
-
 /// Copy the modification time of `src` onto `dst`. Used so caches keyed on
 /// mtime can treat the rendered PNG as being "as fresh as" the source region.
 fn copy_mtime(src: &Path, dst: &Path) -> std::io::Result<()> {
@@ -170,22 +77,22 @@ fn region_to_image(map: &RegionMap) -> image::RgbaImage {
     img
 }
 
-/// Render one region using whichever path the palette requires.
+/// Render one region using whichever engine the palette demands.
 fn render_one(
     x: RCoord,
     z: RCoord,
-    loader: &dyn crate::anvil::region::RegionLoader,
+    loader: &dyn RegionLoader,
     pal: &AnyPalette,
     height_mode: HeightMode,
 ) -> Result<Option<RegionMap>> {
     match pal {
         AnyPalette::Modern(p) => {
-            let drawer = TopShadeRenderer::new(p, height_mode);
-            Ok(render_region(x, z, loader, drawer)?)
+            let engine = TopShadeRenderer::new(p, height_mode);
+            Ok(render_region(x, z, loader, &engine)?)
         }
         AnyPalette::Legacy(p, format) => {
-            let drawer = LegacyTopShadeRenderer::new(p);
-            Ok(render_legacy_region(x, z, loader, drawer, *format)?)
+            let engine = LegacyTopShadeRenderer::new(p, *format);
+            Ok(render_region(x, z, loader, &engine)?)
         }
     }
 }
@@ -210,15 +117,12 @@ pub fn execute(args: RenderArgs) -> Result<()> {
         info!("Output: {}", args.output);
     }
 
-    let height_mode = match args.calculate_heights {
-        true => {
-            info!("Height mode: Calculate");
-            HeightMode::Calculate
-        }
-        false => {
-            info!("Height mode: Trust heightmap");
-            HeightMode::Trust
-        }
+    let height_mode = if args.calculate_heights {
+        info!("Height mode: Calculate");
+        HeightMode::Calculate
+    } else {
+        info!("Height mode: Trust heightmap");
+        HeightMode::Trust
     };
 
     if !args.region.exists() {
@@ -226,9 +130,7 @@ pub fn execute(args: RenderArgs) -> Result<()> {
         return Err(format!("Region path not found: {}", args.region.display()).into());
     }
 
-    // Determine if input is a file or directory
     let (region_dir, coords) = if args.region.is_file() {
-        // Single region file
         let filename = args
             .region
             .file_name()
@@ -251,7 +153,6 @@ pub fn execute(args: RenderArgs) -> Result<()> {
 
         (parent, vec![(x, z)])
     } else if args.region.is_dir() {
-        // Region directory
         info!("Loading regions from directory: {}", args.region.display());
         let loader = RegionFileLoader::new(args.region.clone());
         let coords = loader.list()?;
@@ -272,7 +173,7 @@ pub fn execute(args: RenderArgs) -> Result<()> {
     };
 
     let palette_start = std::time::Instant::now();
-    let pal = load_palette(&args.palette)?;
+    let pal = palette::load(&args.palette)?;
     info!("⏱ Palette loading took: {:?}", palette_start.elapsed());
 
     if args.split {
@@ -332,8 +233,9 @@ pub fn execute(args: RenderArgs) -> Result<()> {
     let bounds = auto_size(&coords).ok_or("Failed to calculate bounds")?;
     info!("Bounds: {:?}", bounds);
 
-    let x_range = bounds.xmin..bounds.xmax;
-    let z_range = bounds.zmin..bounds.zmax;
+    let Rectangle { xmin, xmax, zmin, zmax } = bounds;
+    let x_range = xmin..xmax;
+    let z_range = zmin..zmax;
 
     let region_len: usize = 32 * 16; // 32 chunks per region, 16 blocks per chunk
 
@@ -345,8 +247,7 @@ pub fn execute(args: RenderArgs) -> Result<()> {
             let loader = RegionFileLoader::new(region_dir.clone());
 
             if x < x_range.end && x >= x_range.start && z < z_range.end && z >= z_range.start {
-                let map = render_one(x, z, &loader, &pal, height_mode);
-                match map {
+                match render_one(x, z, &loader, &pal, height_mode) {
                     Ok(Some(map)) => {
                         info!("Processed r.{}.{}.mca", x.0, z.0);
                         Some(map)
@@ -404,14 +305,13 @@ pub fn execute(args: RenderArgs) -> Result<()> {
     }
     info!("⏱ Image assembly took: {:?}", assemble_start.elapsed());
 
-    // Save image to file or stdout as PNG
     if output_to_stdout {
         info!("Writing image to stdout");
-        crate::commands::save_png(img, "-")?;
+        super::save_png(img, "-")?;
         info!("Image written to stdout successfully");
     } else {
         info!("Saving image to: {}", args.output);
-        crate::commands::save_png(img, &args.output)?;
+        super::save_png(img, &args.output)?;
         info!("Done! Map saved successfully.");
     }
     info!("⏱ Total time: {:?}", total_start.elapsed());

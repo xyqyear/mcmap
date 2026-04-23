@@ -1,4 +1,4 @@
-// Chunk data — 1.13+ only. Wraps fastanvil's JavaChunk.
+// 1.13+ chunk — wraps fastanvil's JavaChunk.
 
 pub use fastanvil::HeightMode;
 

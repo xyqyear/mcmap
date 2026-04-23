@@ -6,16 +6,17 @@ use std::io::{Cursor, Read, Seek};
 use std::path::{Path, PathBuf};
 use zip::ZipArchive;
 
-use super::Result;
 use super::raw::{RawBlockstate, RawModel, parse_blockstate_lenient};
 
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
 #[derive(Default)]
-pub(crate) struct Pools {
-    pub(crate) blockstates: HashMap<String, Blockstate>,
-    pub(crate) models: HashMap<String, Model>,
-    pub(crate) textures: HashMap<String, Texture>,
-    pub(crate) raw_blockstates: HashMap<String, RawBlockstate>,
-    pub(crate) raw_models: HashMap<String, RawModel>,
+pub struct Pools {
+    pub blockstates: HashMap<String, Blockstate>,
+    pub models: HashMap<String, Model>,
+    pub textures: HashMap<String, Texture>,
+    pub raw_blockstates: HashMap<String, RawBlockstate>,
+    pub raw_models: HashMap<String, RawModel>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -101,7 +102,7 @@ fn expand_packs(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
 /// Read one archive, inserting every resource that isn't already present in
 /// the pools. First-wins semantics.
 ///
-/// Forge packs the extra mods they depend on as Jar-in-Jar (JIJ) entries under
+/// Forge packs extra mod dependencies as Jar-in-Jar (JIJ) entries under
 /// `META-INF/jarjar/*.jar`. Forge extracts those at runtime, so from the game's
 /// point of view the nested mod's assets are fully available. We do the same:
 /// after reading the outer archive's own assets, recurse into each nested jar
@@ -160,10 +161,10 @@ fn load_archive_from_reader<R: Read + Seek>(
                     }
                     Err(e) => debug!("Failed to parse blockstate {}: {}", name, e),
                 }
-                // Parse raw form for fallback access. Lenient: handles both
-                // vanilla `{variants}/{multipart}` and Forge 1.12.2's
-                // `{forge_marker: 1, defaults, variants}` shape — most 1.12.2
-                // mods ship the latter, and falling through here is what makes
+                // Lenient raw parse for fallback access — handles both vanilla
+                // `{variants}/{multipart}` and Forge 1.12.2's
+                // `{forge_marker: 1, defaults, variants}` shape. Most 1.12.2
+                // mods ship the latter; falling through here is what makes
                 // those blocks resolvable beyond bare-id gray.
                 if let Some(raw) = parse_blockstate_lenient(&buf) {
                     pools.raw_blockstates.insert(key, raw);
@@ -215,10 +216,7 @@ fn load_archive_from_reader<R: Read + Seek>(
     );
 
     for (entry_name, buf) in nested_jars {
-        let short = entry_name
-            .rsplit('/')
-            .next()
-            .unwrap_or(entry_name.as_str());
+        let short = entry_name.rsplit('/').next().unwrap_or(entry_name.as_str());
         let nested_label = format!("{} > {}", label, short);
         if let Err(e) = load_archive_from_reader(&nested_label, Cursor::new(buf), pools) {
             warn!("Failed to load nested {}: {}", entry_name, e);
@@ -250,7 +248,7 @@ fn load_archive(path: &Path, pools: &mut Pools) -> Result<()> {
     load_archive_from_reader(&label, file, pools)
 }
 
-pub(crate) fn load_packs(paths: &[PathBuf]) -> Result<Pools> {
+pub fn load_packs(paths: &[PathBuf]) -> Result<Pools> {
     let archives = expand_packs(paths)?;
     if archives.is_empty() {
         return Err("No pack files to load (did you pass empty directories?)".into());

@@ -1,14 +1,14 @@
+// Vanilla fallback additions + base-color backfill. Modern-path only — the
+// legacy paths have their own per-version post-processing (biome tints keyed
+// by numeric block id).
+
 use fastanvil::Rgba;
 use log::info;
 use std::collections::HashMap;
-use std::fs::File;
-use std::path::Path;
-
-use super::Result;
 
 /// Vanilla-only fallbacks for blocks the renderer can't derive a color for
 /// (water, lava, air, etc.).
-pub(super) fn add_missing_blocks(palette: &mut HashMap<String, Rgba>) {
+pub fn add_missing_blocks(palette: &mut HashMap<String, Rgba>) {
     info!("Adding missing common blocks");
 
     let missing = vec![
@@ -41,7 +41,7 @@ pub(super) fn add_missing_blocks(palette: &mut HashMap<String, Rgba>) {
 
 /// Adds an unqualified `<ns>:<name>` entry for blocks that only have
 /// `<ns>:<name>|<state>` variants, for O(1) lookup fallback. Namespace-agnostic.
-pub(super) fn add_base_colors(palette: &mut HashMap<String, Rgba>) {
+pub fn add_base_colors(palette: &mut HashMap<String, Rgba>) {
     info!("Adding base colors for state variants");
 
     let mut blocks_with_states: HashMap<String, Vec<Rgba>> = HashMap::new();
@@ -65,11 +65,4 @@ pub(super) fn add_base_colors(palette: &mut HashMap<String, Rgba>) {
     }
 
     info!("  Added {} base block colors", added);
-}
-
-/// Parse a user overrides file. Format: `{"namespace:id": [r,g,b,a], ...}`.
-pub(super) fn load_overrides(path: &Path) -> Result<HashMap<String, Rgba>> {
-    let file = File::open(path)?;
-    let map: HashMap<String, [u8; 4]> = serde_json::from_reader(file)?;
-    Ok(map)
 }

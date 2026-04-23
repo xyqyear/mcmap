@@ -1,26 +1,9 @@
-// Generate palette from Minecraft / mod jar resource packs.
+// `gen-palette modern` — palette generation for 1.13+ worlds.
 //
-// Treats vanilla and modded jars identically: every pack is a zip archive
-// containing `assets/<namespace>/{blockstates,models,textures}/...`. The
-// namespace is derived from the path, never hardcoded.
-//
-// Resolution tiers (first success wins):
-//   0. fastanvil renderer — blockstate variant → model → top face texture.
-//   1. raw-model side-face fallback — any face ('up','down','north',...) from
-//      the variant's model, or from any other variant of the same block,
-//      or the first `apply` model of a multipart blockstate.
-//   2. regex rewrites — namespace-agnostic for generic patterns
-//      (fences→planks, walls→planks), minecraft-specific for vanilla quirks
-//      (crops at final stage, fire_0, bamboo_stalk, etc.).
-//   3. texture-path probe — direct lookup at `<ns>:block/<name>`.
-//   4. user overrides JSON (`--overrides`) — final authoritative precedence,
-//      applied after all automatic resolution.
-
-pub(crate) mod color;
-pub(crate) mod packs;
-mod postprocess;
-pub(crate) mod raw;
-pub(crate) mod resolve;
+// Walks standard blockstate/model/texture JSONs across every supplied resource
+// pack (vanilla and modded are treated identically; namespace is derived from
+// the on-disk path). Resolution tiers are listed at the top of
+// `modern_pack/mod.rs`.
 
 use clap::Args;
 use fastanvil::{
@@ -29,17 +12,18 @@ use fastanvil::{
 };
 use log::{info, warn};
 use std::collections::HashMap;
-use std::error::Error;
 use std::path::PathBuf;
 
-use packs::{Pools, load_packs};
-use postprocess::{add_base_colors, add_missing_blocks, load_overrides};
-use resolve::{Counters, Resolver, default_regex_mappings};
+use super::modern_pack::{
+    Counters, Pools, Resolver, add_base_colors, add_missing_blocks, default_regex_mappings,
+    load_packs,
+};
+use super::shared::overrides::{apply_overrides, load_overrides};
 
-type Result<T> = std::result::Result<T, Box<dyn Error>>;
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Args, Debug)]
-pub struct GenPaletteArgs {
+pub struct ModernArgs {
     /// Resource pack to load: a .jar/.zip file, or a directory containing
     /// .jar/.zip files at depth 1. Repeatable; first-listed wins on conflict
     /// (list user packs first, vanilla last).
@@ -56,8 +40,8 @@ pub struct GenPaletteArgs {
     overrides: Option<PathBuf>,
 }
 
-pub fn execute(args: GenPaletteArgs) -> Result<()> {
-    info!("Starting palette generation");
+pub fn execute(args: ModernArgs) -> Result<()> {
+    info!("Starting palette generation (modern / 1.13+)");
     info!("Packs ({}):", args.pack.len());
     for p in &args.pack {
         info!("  - {}", p.display());
@@ -85,7 +69,6 @@ pub fn execute(args: GenPaletteArgs) -> Result<()> {
     let mut palette: HashMap<String, Rgba> = HashMap::new();
 
     info!("Rendering blockstates");
-    // Capture blockstate names before mutably borrowing renderer.
     let bs_names: Vec<String> = blockstates.keys().cloned().collect();
     {
         let mut resolver = Resolver {
@@ -112,7 +95,7 @@ pub fn execute(args: GenPaletteArgs) -> Result<()> {
                     }
                 }
                 Blockstate::Multipart(_) => {
-                    // fastanvil can't render multipart; go straight to
+                    // fastanvil can't render multipart; go straight to the
                     // raw-model fallback (tier 1+) via props=None.
                     if let Some(col) = resolver.resolve(name, None) {
                         palette.insert(name.clone(), col);
@@ -146,14 +129,10 @@ pub fn execute(args: GenPaletteArgs) -> Result<()> {
     add_missing_blocks(&mut palette);
     add_base_colors(&mut palette);
 
-    // User overrides take final precedence over everything automatic.
     if let Some(ref path) = args.overrides {
         info!("Applying overrides from {}", path.display());
         let overrides = load_overrides(path)?;
-        let n = overrides.len();
-        for (k, v) in overrides {
-            palette.insert(k, v);
-        }
+        let n = apply_overrides(&mut palette, overrides);
         info!("  Applied {} override entries", n);
     }
 
@@ -162,9 +141,8 @@ pub fn execute(args: GenPaletteArgs) -> Result<()> {
     serde_json::to_writer_pretty(file, &palette)?;
 
     info!(
-        "\u{2713} Palette generation complete! {} total blocks written",
+        "Palette generation complete — {} total blocks written",
         palette.len()
     );
-
     Ok(())
 }

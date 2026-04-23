@@ -1,10 +1,8 @@
 // Texture-only pack loader for 1.7.10.
 //
-// The modern gen-palette path loads blockstates, models, and textures because
-// it renders block faces through `fastanvil::tex::Renderer`. 1.7.10 packs
-// don't ship blockstate/model JSONs — just raw PNGs under
-// `assets/<ns>/textures/blocks/` — so we only index those. Cheaper, simpler,
-// and avoids pulling unrelated JSON parse errors into this path.
+// 1.7.10 packs don't ship blockstate/model JSONs — block rendering is all
+// hard-coded in Java, so we only index raw PNGs under
+// `assets/<ns>/textures/blocks/`.
 
 use log::{debug, info, warn};
 use std::collections::HashMap;
@@ -13,22 +11,17 @@ use std::io::{Cursor, Read, Seek};
 use std::path::{Path, PathBuf};
 use zip::ZipArchive;
 
-use super::Result;
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 /// One texture pack, indexed by `namespace:relative/path/without_ext`.
-/// The key mirrors the modern pack format so vanilla-style keys like
-/// `"minecraft:block/stone"` (by renaming `textures/blocks/` → `block/`) stay
-/// consistent.
+/// Keys mirror the modern pack format — `"minecraft:block/stone"` — by
+/// collapsing `textures/blocks/` → `block/` at load time. Vanilla 1.7.10
+/// uses `textures/blocks/` on disk; newer packs may use `textures/block/`.
+/// Either works.
 pub struct TexturePack {
     #[allow(dead_code)] // useful for debug logging if we surface it later
     pub label: String,
-    /// Key format: `"<namespace>:block/<name>"` (matches the modern
-    /// resource-pack path convention, with `textures/blocks/` collapsed to
-    /// just `block/`). Vanilla 1.7.10 uses `textures/blocks/` but this key
-    /// normalization lets the resolver use one-shot lookups regardless of
-    /// which convention the pack follows.
-    ///
-    /// Value is raw RGBA bytes (same shape the modern path produces).
+    /// Key format: `"<namespace>:block/<name>"`. Value: raw RGBA bytes.
     pub textures: HashMap<String, Vec<u8>>,
     /// Case-insensitive map from `"<ns_lc>:block/<name_lc>"` to the original
     /// pack key, used to recover from case-mismatched namespaces like
@@ -114,9 +107,8 @@ fn parse_texture_entry(entry_name: &str) -> Option<(String, String)> {
     if ns.is_empty() || rest.is_empty() {
         return None;
     }
-    // Only block textures — this is a top-down renderer.
     if kind != "blocks" && kind != "block" {
-        return None;
+        return None; // top-down renderer — only block textures matter
     }
     let (rest_no_ext, ext) = rest.rsplit_once('.')?;
     if !ext.eq_ignore_ascii_case("png") {
@@ -161,8 +153,8 @@ fn load_archive_from_reader<R: Read + Seek>(
         match image::load_from_memory(&buf) {
             Ok(img) => {
                 // Some textures are animation filmstrips (width < height, N
-                // vertical frames). Crop to a square from the top to keep
-                // single-frame averaging semantics.
+                // vertical frames). Crop to a square from the top so averaging
+                // reflects a single frame instead of the whole reel.
                 let img = normalize_animation_strip(img);
                 let rgba = img.to_rgba8().into_raw();
                 let key = format!("{}:block/{}", ns, rest_no_ext);
@@ -180,10 +172,7 @@ fn load_archive_from_reader<R: Read + Seek>(
     info!("  [{}] + {} textures", label, added);
 
     for (entry_name, buf) in nested {
-        let short = entry_name
-            .rsplit('/')
-            .next()
-            .unwrap_or(entry_name.as_str());
+        let short = entry_name.rsplit('/').next().unwrap_or(entry_name.as_str());
         let nested_label = format!("{} > {}", label, short);
         if let Err(e) = load_archive_from_reader(&nested_label, Cursor::new(buf), pack) {
             warn!("Failed to load nested {}: {}", entry_name, e);

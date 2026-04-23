@@ -1,17 +1,15 @@
-// Command modules
+// Command entry points — one module per subcommand.
 
 pub mod analyze;
 pub mod gen_palette;
-pub mod gen_palette_forge112;
-pub mod gen_palette_legacy;
 pub mod heightmap;
 pub mod render;
+pub mod util;
 
-/// Save image as PNG to file or stdout
+/// Save image as PNG to file or stdout.
 ///
-/// # Arguments
-/// * `img` - Image buffer
-/// * `output_path` - Output file path, or "-" for stdout
+/// `output_path == "-"` writes a PNG-encoded byte stream to stdout (useful
+/// for piping into HTTP handlers etc.); anything else is a filesystem path.
 pub fn save_png(
     img: image::RgbaImage,
     output_path: &str,
@@ -31,6 +29,5 @@ pub fn save_png(
     } else {
         img.save(output_path)?;
     }
-
     Ok(())
 }

@@ -6,8 +6,8 @@
 // which tier succeeded, and returns the first hit.
 
 use super::packs::TexturePack;
-use crate::anvil::legacy::palette::Rgba;
-use crate::commands::gen_palette::color::avg_colour;
+use crate::anvil::palette::Rgba;
+use crate::commands::gen_palette::shared::color::avg_colour;
 
 #[derive(Default, Debug)]
 pub struct ResolveStats {
@@ -64,8 +64,6 @@ pub fn resolve_modded(
                 if key_ns != ns_lc {
                     continue;
                 }
-                // key_rest is "block/<filename>" — extract the filename and
-                // check containment (case-insensitive).
                 let filename = key_rest.strip_prefix("block/").unwrap_or(key_rest);
                 if filename.to_lowercase().contains(&needle) {
                     return Some((avg_colour(tex), MatchKind::Fuzzy));
@@ -84,21 +82,14 @@ fn candidate_keys(ns: &str, local: &str) -> Vec<String> {
     let mut out = Vec::new();
     let pushes = |v: &mut Vec<String>, s: &str| {
         v.push(format!("{}:block/{}", ns, s));
-        // Some packs put textures under `textures/block/` (singular) instead
-        // of `blocks/` — we normalize both to `block/` at load time, so only
-        // one key format is tried.
     };
 
     pushes(&mut out, local);
 
-    // Strip common "tile." prefix. Example: tile.stone → stone.
     if let Some(stripped) = local.strip_prefix("tile.") {
         pushes(&mut out, stripped);
     }
 
-    // Many mods register blocks like `gt.blockmetal1`. The texture is usually
-    // `blockmetal1.png` or `metal1.png`. Try stripping the leading segment
-    // up to and including the first dot.
     if let Some(idx) = local.find('.') {
         let stripped = &local[idx + 1..];
         if !stripped.is_empty() && stripped != local {
@@ -106,8 +97,6 @@ fn candidate_keys(ns: &str, local: &str) -> Vec<String> {
         }
     }
 
-    // Replace dots with underscores — some mods use `foo.bar` name but
-    // `foo_bar.png` texture.
     if local.contains('.') {
         let replaced = local.replace('.', "_");
         pushes(&mut out, &replaced);
@@ -127,8 +116,6 @@ fn fuzzy_needle(local: &str) -> String {
         .or_else(|| lc.strip_prefix("block."))
         .or_else(|| lc.strip_prefix("gt."))
         .unwrap_or(&lc);
-    // Prefer the trailing segment after the last '.' if the name has dotted
-    // segments.
     let needle = if let Some(idx) = trimmed.rfind('.') {
         &trimmed[idx + 1..]
     } else {

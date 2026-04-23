@@ -1,21 +1,27 @@
-// Vanilla 1.7.10 (block name, meta) → texture-path table.
+// Vanilla 1.7.10 / 1.12.2 (block name, meta) → texture-path table, plus the
+// biome-tint + water/lava/air post-processing that both legacy palette
+// pipelines apply after resolution.
 //
 // 1.7.10 has no blockstate/model JSONs — the mapping from numeric ID +
 // metadata to a texture is encoded in Java source inside the `Block`
-// subclasses. This table captures that for the vanilla blocks we actually
-// care about on a top-down map (terrain, water, wood, wool, flowers, ...).
+// subclasses. Texture filenames under `assets/minecraft/textures/blocks/`
+// are stable between 1.7.10 and 1.12.2; only the directory plural ("blocks/"
+// vs "block/") shifted in 1.13, so the same table drives both legacy pipelines.
 //
 // Keys are the block's unlocalized/registry name *without* the `minecraft:`
 // prefix. Values are `(meta, texture_key)` pairs where `texture_key` is the
-// pack-internal key we stored in `TexturePack.textures` — i.e. always
-// `"minecraft:block/<filename_without_png>"`.
+// pack-internal key — always `"minecraft:block/<filename_without_png>"`.
 //
-// When a block only has one face that matters for top-down rendering we
-// emit a single `(0, path)` — variants that differ only in side appearance
-// reuse the same top texture.
+// When a block only has one face that matters for top-down rendering, a single
+// `(0, path)` is emitted — variants that differ only in side appearance reuse
+// the same top texture.
 
-/// Returns the list of `(meta, texture_key)` mappings for a vanilla block.
-/// Empty vec means "not in table" — caller falls back to filename probing.
+use fastanvil::Rgba;
+use std::collections::HashMap;
+use std::hash::Hash;
+
+/// (meta, texture_key) variants for a vanilla block. Empty vec means "not in
+/// table" — caller falls back to filename probing.
 pub fn variants_for(name: &str) -> Vec<(u16, &'static str)> {
     match name {
         "air" => return vec![],
@@ -24,8 +30,8 @@ pub fn variants_for(name: &str) -> Vec<(u16, &'static str)> {
         "dirt" => {
             return vec![
                 (0, "minecraft:block/dirt"),
-                (1, "minecraft:block/dirt"),             // coarse (= dirt)
-                (2, "minecraft:block/dirt_podzol_top"),  // podzol
+                (1, "minecraft:block/dirt"),            // coarse (= dirt)
+                (2, "minecraft:block/dirt_podzol_top"), // podzol
             ];
         }
         "cobblestone" => return single("minecraft:block/cobblestone"),
@@ -64,8 +70,7 @@ pub fn variants_for(name: &str) -> Vec<(u16, &'static str)> {
         "coal_ore" => return single("minecraft:block/coal_ore"),
         "log" => {
             // meta & 0x3 selects species; high bits are axis (irrelevant for
-            // top-down on the end-grain face). For top-down rendering the
-            // top face is what shows through.
+            // top-down rendering — the top face is what shows through).
             return vec![
                 (0, "minecraft:block/log_oak_top"),
                 (1, "minecraft:block/log_spruce_top"),
@@ -337,8 +342,8 @@ fn wool_like(prefix: &'static str) -> Vec<(u16, &'static str)> {
         "red",
         "black",
     ];
-    // Leaking static strings once per variant is acceptable here — the table
-    // is static and this only runs during palette generation (one-shot).
+    // Leaking static strings once per variant is acceptable — the table is
+    // static and this only runs during palette generation (one-shot).
     COLORS
         .iter()
         .enumerate()
@@ -347,4 +352,87 @@ fn wool_like(prefix: &'static str) -> Vec<(u16, &'static str)> {
             (i as u16, s)
         })
         .collect()
+}
+
+/// Apply biome tints + water/lava/air special-casing to vanilla-namespaced
+/// blocks. Shared by both legacy pipelines — runs before user overrides so
+/// the user can still override these.
+pub fn apply_vanilla_postprocess<I>(
+    palette: &mut HashMap<String, Rgba>,
+    id_to_name: &HashMap<I, String>,
+) where
+    I: Copy + std::fmt::Display + Eq + Hash,
+{
+    // Tints applied to every `id|meta` + bare `id` entry of the block.
+    let grass_tint: Rgba = [124, 189, 107, 255];
+    let foliage_tint: Rgba = [84, 130, 54, 255];
+    let vine_tint: Rgba = [106, 136, 44, 200];
+
+    for (id, name) in id_to_name {
+        let (_ns, local) = match name.split_once(':') {
+            Some(p) => p,
+            None => continue,
+        };
+        match local {
+            "air" => set_block_color(palette, *id, [0, 0, 0, 0]),
+            "water" | "flowing_water" => set_block_color(palette, *id, [63, 118, 228, 180]),
+            "lava" | "flowing_lava" => set_block_color(palette, *id, [207, 78, 0, 255]),
+            "grass" | "mycelium" => multiply_block_color(palette, *id, grass_tint),
+            "tallgrass" | "fern" | "double_plant" => {
+                multiply_block_color(palette, *id, grass_tint)
+            }
+            "leaves" | "leaves2" | "waterlily" => {
+                multiply_block_color(palette, *id, foliage_tint)
+            }
+            "vine" => multiply_block_color(palette, *id, vine_tint),
+            _ => {}
+        }
+    }
+}
+
+fn set_block_color<I: std::fmt::Display>(palette: &mut HashMap<String, Rgba>, id: I, color: Rgba) {
+    let prefix_eq = format!("{}", id);
+    let prefix_pipe = format!("{}|", id);
+    let mut matching: Vec<String> = palette
+        .keys()
+        .filter(|k| *k == &prefix_eq || k.starts_with(&prefix_pipe))
+        .cloned()
+        .collect();
+    matching.push(prefix_eq);
+    for k in matching {
+        palette.insert(k, color);
+    }
+}
+
+fn multiply_block_color<I: std::fmt::Display>(
+    palette: &mut HashMap<String, Rgba>,
+    id: I,
+    tint: Rgba,
+) {
+    let prefix_eq = format!("{}", id);
+    let prefix_pipe = format!("{}|", id);
+    let keys: Vec<String> = palette
+        .keys()
+        .filter(|k| *k == &prefix_eq || k.starts_with(&prefix_pipe))
+        .cloned()
+        .collect();
+    for k in keys {
+        if let Some(existing) = palette.get(&k).copied() {
+            palette.insert(k, multiply_rgba(existing, tint));
+        }
+    }
+}
+
+fn multiply_rgba(a: Rgba, b: Rgba) -> Rgba {
+    [
+        mul_channel(a[0], b[0]),
+        mul_channel(a[1], b[1]),
+        mul_channel(a[2], b[2]),
+        mul_channel(a[3], b[3]),
+    ]
+}
+
+#[inline]
+fn mul_channel(a: u8, b: u8) -> u8 {
+    (((a as u16) * (b as u16)) / 255) as u8
 }

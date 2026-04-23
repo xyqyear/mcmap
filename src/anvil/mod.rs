@@ -1,20 +1,25 @@
-// Anvil format support for overhead map rendering.
+// Anvil-format rendering.
 //
-// Two paths exist side by side:
+// The on-disk region file layout (.mca container, zlib-framed chunks, 32×32
+// grid) is unchanged across all supported Minecraft versions and lives in
+// `region`. Per-version chunk decoding + column rendering is a `RenderEngine`
+// that plugs into the shared `pipeline`:
 //
-// - The 1.13+ path (`chunk`, `render`) wraps `fastanvil::JavaChunk` and its
-//   rendering helpers. This is the fast, mature path for modern worlds.
-// - The pre-1.13 path (`legacy`) handles 1.7.10 worlds with or without
-//   NotEnoughIDs installed. Uses `fastnbt` directly for chunk parsing.
+//   - `modern` — 1.13+ via `fastanvil::JavaChunk` + `TopShadeRenderer`.
+//   - `legacy` — pre-1.13 (vanilla 1.7.10/1.12.2, NEID, Forge 1.12.2 REI).
 //
-// Region-file I/O (`region`) is shared — the .mca container is unchanged
-// between versions.
+// `palette` handles the top-level load — its `AnyPalette` carries enough to
+// build the right engine at render time.
 
-pub mod chunk;
 pub mod legacy;
+pub mod modern;
+pub mod palette;
+pub mod pipeline;
 pub mod region;
-mod render;
 
-pub use chunk::HeightMode;
+pub use palette::AnyPalette;
+pub use pipeline::{RegionMap, RenderEngine, Rgba, render_region};
 pub use region::{CCoord, RCoord, RegionFileLoader};
-pub use render::{RegionMap, RenderedPalette, Rgba, TopShadeRenderer, render_region};
+
+// Re-exports for common modern-path usage from other commands.
+pub use modern::{HeightMode, RenderedPalette, TopShadeRenderer};

@@ -2,7 +2,7 @@
 //
 // Forge rewrote registries in 1.8: instead of one flat `FML.ItemData` list
 // mixing blocks + items (with `\x01` / `\x02` byte prefixes — see the 1.7.10
-// parser at `gen_palette_legacy::leveldat`), 1.12.2 worlds use:
+// parser at `legacy::leveldat`), 1.12.2 worlds use:
 //
 //   FML.Registries.<registry_name>.ids: List<{K: "ns:name", V: int_id}>
 //
@@ -10,8 +10,7 @@
 // REI/JEID (which lift the vanilla 4095 ceiling), so we treat `V` as a full
 // `i32` — no masking — and cast to `u32` for downstream lookups.
 //
-// We deliberately don't read the other registries (`items`, `potions`,
-// `biomes`, `enchantments`, etc.) — only blocks affect a top-down map.
+// Only the blocks registry matters for a top-down map.
 
 use flate2::read::GzDecoder;
 use log::debug;
@@ -20,7 +19,7 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;
 
-use super::Result;
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Default)]
 pub struct FmlRegistry {

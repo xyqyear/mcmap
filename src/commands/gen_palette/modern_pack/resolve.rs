@@ -4,17 +4,17 @@ use log::debug;
 use regex::Regex;
 use std::collections::HashMap;
 
-use super::color::avg_colour;
 use super::raw::{
     RawBlockstate, RawModel, RawVariantRef, RawVariantSpec, flatten_raw_model,
     flatten_raw_model_with_overrides, qualify, resolve_face_texture,
 };
+use crate::commands::gen_palette::shared::color::avg_colour;
 
 /// Pick the first face in a flattened model whose texture is present.
 /// Preference order: up → down → side faces (block top is what matters most
 /// for a top-down map; down handles blocks only visible from underneath;
 /// sides are last resort).
-pub(crate) fn render_any_face(
+pub fn render_any_face(
     model: &RawModel,
     textures: &HashMap<String, Texture>,
 ) -> Option<Texture> {
@@ -40,7 +40,7 @@ pub(crate) fn render_any_face(
 /// runtime. They do still declare a `particle` texture (the texture used for
 /// break particles) that's a sensible stand-in color — oak planks for most
 /// beds, magenta_wool for magenta buried petals.
-pub(crate) fn render_particle_texture(
+pub fn render_particle_texture(
     model: &RawModel,
     textures: &HashMap<String, Texture>,
 ) -> Option<Texture> {
@@ -57,7 +57,7 @@ pub(crate) fn render_particle_texture(
 /// that appears anywhere in the model — direct `textures` map, child models'
 /// `textures` maps, and their flattened parent chains — and return the first
 /// one whose PNG is actually in the texture pool.
-pub(crate) fn render_any_texture_ref(
+pub fn render_any_texture_ref(
     model: &RawModel,
     raw_models: &HashMap<String, RawModel>,
     textures: &HashMap<String, Texture>,
@@ -78,7 +78,7 @@ pub(crate) fn render_any_texture_ref(
         }
         for (k, v) in map {
             if k == "particle" || v.starts_with('#') {
-                continue; // particle handled by its own tier; skip refs
+                continue;
             }
             if let Some(tex) = textures.get(&qualify(v)) {
                 return Some(tex.clone());
@@ -117,7 +117,7 @@ pub(crate) fn render_any_texture_ref(
 /// the model to `choose`. First strategy-returned texture wins. Forge
 /// blockstates carry per-variant `textures` overrides on the variant ref —
 /// these are merged onto the flattened model before `choose` sees it.
-pub(crate) fn render_any_variant_of_block(
+pub fn render_any_variant_of_block(
     raw_bs: &RawBlockstate,
     raw_models: &HashMap<String, RawModel>,
     mut choose: impl FnMut(&RawModel) -> Option<Texture>,
@@ -182,7 +182,7 @@ pub(crate) fn render_any_variant_of_block(
 /// first key under `<ns>:blocks/<name>/...` or `<ns>:block/<name>/...`.
 /// Several mods also ship a generic-stem variant (`<name>` minus a leading
 /// `block_` / `block` / trailing `_block`); try those too.
-pub(crate) fn probe_texture_by_name(
+pub fn probe_texture_by_name(
     block_name: &str,
     textures: &HashMap<String, Texture>,
 ) -> Option<Texture> {
@@ -251,7 +251,7 @@ fn derive_block_stems(name: &str) -> Vec<String> {
 /// boundaries — substring inside a longer word doesn't count). Stems
 /// shorter than 4 chars are ignored to avoid spurious matches like "ice"
 /// catching anything containing "iced".
-pub(crate) fn probe_texture_by_substring(
+pub fn probe_texture_by_substring(
     block_name: &str,
     textures: &HashMap<String, Texture>,
 ) -> Option<Texture> {
@@ -288,42 +288,25 @@ fn texture_path_contains_segment(tex_key: &str, segment: &str) -> bool {
 
 /// Per-tier success counters. Used only for the final resolution summary.
 #[derive(Default)]
-pub(crate) struct Counters {
-    pub(crate) rendered: usize,
-    pub(crate) side_fallback: usize,
-    pub(crate) particle: usize,
-    pub(crate) any_texture: usize,
-    pub(crate) mapped: usize,
-    pub(crate) probed: usize,
-    pub(crate) substring: usize,
-    pub(crate) generic_blockstate: usize,
+pub struct Counters {
+    pub rendered: usize,
+    pub side_fallback: usize,
+    pub particle: usize,
+    pub any_texture: usize,
+    pub mapped: usize,
+    pub probed: usize,
+    pub substring: usize,
+    pub generic_blockstate: usize,
 }
 
 /// Rank sibling blockstates in the same namespace whose underscore-stripped
 /// local name forms either a prefix or suffix of the queried block's local
 /// name. Bridges dynamically-registered blocks to the generic family
-/// blockstate they share:
-/// - prefix: `chisel:carpet_red` → `chisel:carpet`, `chisel:basalt2` →
-///   `chisel:basalt`, `chisel:glasspane` → `chisel:glass` (variant suffix
-///   tacked on the registered name; the prefix tends to be the meaningful
-///   material family).
-/// - suffix: `modularmachinery:zero_factor_converter_factory_controller` →
-///   `modularmachinery:blockfactorycontroller` (registered names build up
-///   ahead of a generic family stem).
-///
-/// Returns candidates sorted by stem length descending (most specific
+/// blockstate they share. See source comments below for the full match
+/// rules. Returns candidates sorted by stem length descending (most specific
 /// first), so the caller can fall through to a less-specific generic if
 /// the most specific one's textures don't resolve.
-///
-/// Match rules:
-/// - Both names normalized: lowercased, all non-alphanumerics dropped.
-/// - The candidate is also tried with a leading `block` stripped (so
-///   `blockfactorycontroller` matches a name ending in `factory_controller`).
-/// - Suffix matches require ≥6 chars (controllers/etc. tend to be long
-///   compounds; short suffix matches like `_iron` are noisy). Prefix
-///   matches allow ≥4 chars since material families are short and the
-///   stem ordering already pins the match.
-pub(crate) fn find_generic_blockstates<'a>(
+pub fn find_generic_blockstates<'a>(
     block_name: &str,
     raw_blockstates: &'a HashMap<String, RawBlockstate>,
 ) -> Vec<&'a RawBlockstate> {
@@ -347,8 +330,7 @@ pub(crate) fn find_generic_blockstates<'a>(
         let bs_local = &key[prefix.len()..];
         let bs_norm = normalize_for_match(bs_local);
         if bs_norm == name_norm {
-            // Direct match would have been found by the primary lookup.
-            continue;
+            continue; // direct match handled by primary lookup
         }
         let candidates = [bs_norm.as_str(), bs_norm.strip_prefix("block").unwrap_or("")];
         let mut best_for_key: Option<usize> = None;
@@ -367,7 +349,6 @@ pub(crate) fn find_generic_blockstates<'a>(
             hits.push((len, key.as_str()));
         }
     }
-    // Longest-stem-first; ties broken alphabetically for determinism.
     hits.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(b.1)));
     hits.into_iter()
         .filter_map(|(_, k)| raw_blockstates.get(k))
@@ -382,13 +363,13 @@ fn normalize_for_match(s: &str) -> String {
 }
 
 #[derive(Debug)]
-pub(crate) struct RegexMapping {
-    pub(crate) blockstate: Regex,
-    pub(crate) texture_template: &'static str,
+pub struct RegexMapping {
+    pub blockstate: Regex,
+    pub texture_template: &'static str,
 }
 
 impl RegexMapping {
-    pub(crate) fn apply(&self, blockstate: &str) -> Option<String> {
+    pub fn apply(&self, blockstate: &str) -> Option<String> {
         let caps = self.blockstate.captures(blockstate)?;
         let mut i = 1;
         let mut tex = self.texture_template.to_string();
@@ -406,26 +387,24 @@ impl RegexMapping {
     }
 }
 
-/// Tiered blockstate → color resolver shared by both the modern (1.13+) and
-/// Forge-1.12.2 (REI) palette commands. Walks blockstate JSON via fastanvil's
-/// renderer first; on failure falls back through raw model heuristics, regex
-/// rewrites for naming patterns, and finally a direct texture-path probe.
-pub(crate) struct Resolver<'a> {
-    pub(crate) renderer: &'a mut Renderer,
-    pub(crate) raw_blockstates: &'a HashMap<String, RawBlockstate>,
-    pub(crate) raw_models: &'a HashMap<String, RawModel>,
-    pub(crate) textures: &'a HashMap<String, Texture>,
-    pub(crate) mappings: &'a [RegexMapping],
-    pub(crate) counters: &'a mut Counters,
+/// Tiered blockstate → color resolver. Shared by both `gen-palette modern`
+/// (1.13+) and `gen-palette forge112` (1.12.2 REI). Walks blockstate JSON via
+/// fastanvil's renderer first; on failure falls back through raw model
+/// heuristics, regex rewrites for naming patterns, and finally a direct
+/// texture-path probe.
+pub struct Resolver<'a> {
+    pub renderer: &'a mut Renderer,
+    pub raw_blockstates: &'a HashMap<String, RawBlockstate>,
+    pub raw_models: &'a HashMap<String, RawModel>,
+    pub textures: &'a HashMap<String, Texture>,
+    pub mappings: &'a [RegexMapping],
+    pub counters: &'a mut Counters,
 }
 
 impl<'a> Resolver<'a> {
     /// Try every resolution tier in order. Returns `None` only when nothing
     /// succeeds — the caller decides whether to substitute a placeholder.
-    pub(crate) fn resolve(&mut self, name: &str, props: Option<&str>) -> Option<Rgba> {
-        // Tier 0: fastanvil renderer on the exact variant (only when caller
-        // supplied properties — avoids a guaranteed-fail call for multipart
-        // / single-variant blocks).
+    pub fn resolve(&mut self, name: &str, props: Option<&str>) -> Option<Rgba> {
         if let Some(p) = props {
             if let Ok(tex) = self.renderer.get_top(name, p) {
                 self.counters.rendered += 1;
@@ -437,7 +416,6 @@ impl<'a> Resolver<'a> {
                 return Some(rgba);
             }
         }
-        // Tier 2: regex rewrites (generic + vanilla quirks).
         for mapping in self.mappings {
             if let Some(tex_name) = mapping.apply(name) {
                 if let Some(tex) = self.textures.get(&tex_name) {
@@ -447,34 +425,28 @@ impl<'a> Resolver<'a> {
                 }
             }
         }
-        // Tier 3: direct texture-path probe by block name.
         if let Some(tex) = probe_texture_by_name(name, self.textures) {
             debug!("Probed texture for {}", name);
             self.counters.probed += 1;
             return Some(avg_colour(&tex));
         }
-        // Tier 4: substring-match texture probe across the namespace —
-        // catches custom state mappers (chisel `blockaluminum` → `metals/
-        // aluminum/...`) and dynamically-named blocks whose textures are
-        // grouped by material rather than block id.
         if let Some(tex) = probe_texture_by_substring(name, self.textures) {
             debug!("Substring-probed texture for {}", name);
             self.counters.substring += 1;
             return Some(avg_colour(&tex));
         }
-        // Tier 5: bridge dynamically-named blocks to a sibling generic
-        // blockstate (modularmachinery's per-machine controllers all share
+        // Bridge dynamically-named blocks to a sibling generic blockstate
+        // (modularmachinery's per-machine controllers all share
         // `blockfactorycontroller` / `blockcontroller`). Walks candidates
-        // longest-stem-first and uses the first one whose textures
-        // actually resolve — necessary because the closest stem isn't
-        // always the one with usable assets (chisel `glasspane*` variants
-        // bridge to `glass` if `glasspane`'s referenced textures are
-        // missing).
+        // longest-stem-first and uses the first one whose textures actually
+        // resolve — the closest stem isn't always the one with usable
+        // assets (chisel `glasspane*` variants bridge to `glass` if
+        // `glasspane`'s referenced textures are missing).
         let candidates = find_generic_blockstates(name, self.raw_blockstates);
         if !candidates.is_empty() {
-            // Snapshot tier counters; if the generic resolves, attribute the
-            // hit to the generic_blockstate counter rather than letting it
-            // inflate side/particle/any_texture.
+            // Snapshot tier counters; if a generic resolves, attribute the
+            // hit to generic_blockstate rather than inflating side/particle/
+            // any_texture.
             let snap = (
                 self.counters.side_fallback,
                 self.counters.particle,
@@ -501,23 +473,18 @@ impl<'a> Resolver<'a> {
     /// Factored out so the same pipeline can be re-applied to a fallback
     /// generic blockstate without duplicating the chain.
     fn resolve_blockstate(&mut self, raw_bs: &RawBlockstate) -> Option<Rgba> {
-        // Tier 1: any-face across variants / multipart parts.
         if let Some(tex) = render_any_variant_of_block(raw_bs, self.raw_models, |m| {
             render_any_face(m, self.textures)
         }) {
             self.counters.side_fallback += 1;
             return Some(avg_colour(&tex));
         }
-        // Tier 1.5: particle-texture fallback for tile-entity-rendered
-        // blocks (signs, beds, chests, ...).
         if let Some(tex) = render_any_variant_of_block(raw_bs, self.raw_models, |m| {
             render_particle_texture(m, self.textures)
         }) {
             self.counters.particle += 1;
             return Some(avg_colour(&tex));
         }
-        // Tier 1.7: any texture reference anywhere in the model tree —
-        // catches Forge custom loaders that bypass `elements`.
         if let Some(tex) = render_any_variant_of_block(raw_bs, self.raw_models, |m| {
             render_any_texture_ref(m, self.raw_models, self.textures)
         }) {
@@ -531,7 +498,7 @@ impl<'a> Resolver<'a> {
 /// Default regex-rewrite list shared across palette commands. Generic
 /// patterns (fences, gates, walls) are namespace-agnostic; minecraft-specific
 /// patterns (crops at final stage, fire frame 0, …) target vanilla quirks.
-pub(crate) fn default_regex_mappings() -> Vec<RegexMapping> {
+pub fn default_regex_mappings() -> Vec<RegexMapping> {
     vec![
         // Generic (namespace-agnostic)
         RegexMapping {

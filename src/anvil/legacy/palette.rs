@@ -1,11 +1,9 @@
 // Palette for pre-1.13 worlds (1.7.10 + NEID, or Forge 1.12.2 + REI).
 //
 // Keyed by numeric block ID and (optionally) metadata. The JSON on disk is
-// wrapped with a `"format"` sentinel — `"1.7.10"` or `"1.12.2"` — so the
-// renderer can pick the matching chunk decoder.
-//
-// The lookup shape is the same for both formats: every block decodes to an
-// `(id, meta)` pair regardless of what the on-disk chunk encoding looked like.
+// wrapped with a `"format"` sentinel — `"1.7.10"` or `"1.12.2"` — read by
+// `anvil::palette::detect_format` to pick the matching chunk decoder. The
+// in-memory shape is identical for both formats.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -34,9 +32,7 @@ pub struct LegacyPalette {
 
 impl LegacyPalette {
     /// Parse from a `LegacyPaletteFile`. Keys must be `"<id>"` or
-    /// `"<id>|<meta>"`; anything else is skipped with a warning via the
-    /// supplied logger callback (keeps us from pulling `log` into this leaf
-    /// module just to warn on malformed entries).
+    /// `"<id>|<meta>"`; anything else is skipped (logged at debug).
     pub fn from_file(file: LegacyPaletteFile) -> Self {
         let mut by_id_meta = HashMap::with_capacity(file.blocks.len());
         let mut by_id = HashMap::new();
@@ -62,8 +58,8 @@ impl LegacyPalette {
 
     /// Load + parse a `.json` palette from disk. Accepts both legacy formats
     /// (1.7.10 vanilla/NEID and 1.12.2 REI) — the in-memory shape is the same;
-    /// the format string only matters at the renderer level for chunk-decoder
-    /// dispatch.
+    /// the format string is read by `anvil::palette::detect_format` at the
+    /// renderer level for chunk-decoder dispatch.
     pub fn load(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let bytes = std::fs::read(path)?;
         let file: LegacyPaletteFile = serde_json::from_slice(&bytes)?;
@@ -104,37 +100,4 @@ fn parse_key(k: &str) -> Option<(u16, Option<u16>)> {
         let id: u16 = k.parse().ok()?;
         Some((id, None))
     }
-}
-
-/// Peek at a palette JSON file to determine its format without fully parsing
-/// it. Looks for the `"format"` field at the root; if absent (flat map of
-/// `"namespace:name" -> rgba`) we assume modern 1.13+.
-pub fn detect_palette_format(
-    path: &Path,
-) -> Result<PaletteFormat, Box<dyn std::error::Error>> {
-    let bytes = std::fs::read(path)?;
-    #[derive(Deserialize)]
-    struct Probe {
-        #[serde(default)]
-        format: Option<String>,
-    }
-    let probe: Probe = serde_json::from_slice(&bytes)?;
-    match probe.format.as_deref() {
-        Some("1.7.10") => Ok(PaletteFormat::Legacy17),
-        Some("1.12.2") => Ok(PaletteFormat::Forge112),
-        _ => Ok(PaletteFormat::Modern),
-    }
-}
-
-/// Which on-disk format a palette JSON came from. The renderer uses this to
-/// pick the chunk decoder; the in-memory `LegacyPalette` is identical for
-/// the two legacy variants.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PaletteFormat {
-    Modern,
-    /// 1.7.10 vanilla, optionally with NotEnoughIDs (Blocks16/Data16).
-    Legacy17,
-    /// Forge 1.12.2 with RoughlyEnoughIDs / JustEnoughIDs (per-section
-    /// Palette IntArray).
-    Forge112,
 }

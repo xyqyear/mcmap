@@ -9,53 +9,28 @@
 //      special-casing them.
 //   3. Apply top-shading by comparing this column's surface height to its
 //      northern neighbour — classic "slightly darker if lower, lighter if
-//      higher" trick for pseudo-3D relief.
+//      higher" trick for pseudo-3D relief. Shade multipliers (180/220/255)
+//      mirror fastanvil's so the legacy and modern paths blend visually in
+//      maps that mix them.
 
 use super::chunk::LegacyChunkData;
 use super::chunk_forge112;
-use super::palette::{LegacyPalette, PaletteFormat, Rgba};
-use crate::anvil::region::{CCoord, RCoord, RegionLoader};
-use crate::anvil::render::RegionMap;
+use super::palette::LegacyPalette;
+use crate::anvil::palette::PaletteFormat;
+use crate::anvil::pipeline::{RenderEngine, Rgba};
 
 const SECTION_Y_MAX: i32 = 255;
 
-/// Render-time state. `shade` mirrors the shade factors used by
-/// `fastanvil::TopShadeRenderer` so the legacy path blends visually with the
-/// modern path in maps that mix them.
+/// Pre-1.13 top-shade renderer. Plugs into the shared region pipeline; the
+/// format tag selects which NBT decoder to run.
 pub struct LegacyTopShadeRenderer<'a> {
     palette: &'a LegacyPalette,
+    format: PaletteFormat,
 }
 
 impl<'a> LegacyTopShadeRenderer<'a> {
-    pub fn new(palette: &'a LegacyPalette) -> Self {
-        Self { palette }
-    }
-
-    /// Render a single chunk into a 16×16 block of Rgba pixels, YZX row-major
-    /// (z outer, x inner — matches `RegionMap::chunk`).
-    pub fn render(
-        &self,
-        chunk: &LegacyChunkData,
-        north: Option<&LegacyChunkData>,
-    ) -> [Rgba; 16 * 16] {
-        let mut out = [[0u8; 4]; 16 * 16];
-        for z in 0..16usize {
-            for x in 0..16usize {
-                let (color, height) = self.render_column(chunk, x, z);
-                let neighbour_height = if z == 0 {
-                    // The top row of the chunk uses the south-most row of the
-                    // chunk immediately above (to the north in world coords).
-                    north
-                        .and_then(|n| surface_height(n, x, 15))
-                        .unwrap_or(height)
-                } else {
-                    surface_height(chunk, x, z - 1).unwrap_or(height)
-                };
-                let shaded = apply_shade(color, height, neighbour_height);
-                out[z * 16 + x] = shaded;
-            }
-        }
-        out
+    pub fn new(palette: &'a LegacyPalette, format: PaletteFormat) -> Self {
+        Self { palette, format }
     }
 
     fn render_column(
@@ -103,9 +78,50 @@ impl<'a> LegacyTopShadeRenderer<'a> {
     }
 }
 
+impl<'a> RenderEngine for LegacyTopShadeRenderer<'a> {
+    type Chunk = LegacyChunkData;
+
+    fn decode(&self, bytes: &[u8]) -> Result<Option<Self::Chunk>, String> {
+        let decoded = match self.format {
+            PaletteFormat::Forge112 => chunk_forge112::from_bytes(bytes),
+            // Modern shouldn't reach the legacy engine at all (the dispatcher
+            // routes elsewhere), but treating it like 1.7.10 here is safe.
+            PaletteFormat::Legacy17 | PaletteFormat::Modern => {
+                LegacyChunkData::from_bytes(bytes)
+            }
+        }?;
+        Ok(Some(decoded))
+    }
+
+    fn render_chunk(
+        &self,
+        chunk: &LegacyChunkData,
+        north: Option<&LegacyChunkData>,
+    ) -> [Rgba; 16 * 16] {
+        let mut out = [[0u8; 4]; 16 * 16];
+        for z in 0..16usize {
+            for x in 0..16usize {
+                let (color, height) = self.render_column(chunk, x, z);
+                let neighbour_height = if z == 0 {
+                    // Top row of the chunk uses the south-most row of the
+                    // chunk immediately above (to the north in world coords).
+                    north
+                        .and_then(|n| surface_height(n, x, 15))
+                        .unwrap_or(height)
+                } else {
+                    surface_height(chunk, x, z - 1).unwrap_or(height)
+                };
+                let shaded = apply_shade(color, height, neighbour_height);
+                out[z * 16 + x] = shaded;
+            }
+        }
+        out
+    }
+}
+
 /// Composite `top` underneath the currently-accumulated color. Standard
-/// "src-over" alpha blending in premultiplied terms, but we use straight
-/// alpha throughout for simplicity (palette entries aren't premultiplied).
+/// "src-over" alpha blending in straight-alpha form (palette entries aren't
+/// premultiplied).
 fn composite_under(acc: &mut [f32; 4], top: Rgba) {
     let a = top[3] as f32 / 255.0;
     let remaining = 1.0 - acc[3];
@@ -129,7 +145,7 @@ fn finalize(acc: [f32; 4]) -> Rgba {
     ]
 }
 
-/// Find the Y of the top opaque block for shading. Cheaper than a full
+/// Y of the top opaque block, for shading only. Cheaper than a full column
 /// composite — we only need a single number.
 fn surface_height(chunk: &LegacyChunkData, x: usize, z: usize) -> Option<i32> {
     let start_y = chunk
@@ -171,75 +187,4 @@ fn apply_shade(color: Rgba, height: i32, neighbour: i32) -> Rgba {
 #[inline]
 fn scale(c: u8, mul: u16) -> u8 {
     ((c as u16 * mul) / 255) as u8
-}
-
-/// Decode a legacy chunk's NBT bytes using the parser appropriate for the
-/// active palette format. Returns `Err` only on a real parse failure — chunks
-/// with wrong-format payloads end up as `Err` at the type-mismatch level.
-fn decode_chunk(bytes: &[u8], format: PaletteFormat) -> Result<LegacyChunkData, String> {
-    match format {
-        PaletteFormat::Forge112 => chunk_forge112::from_bytes(bytes),
-        // Modern shouldn't reach the legacy renderer at all (the dispatcher
-        // routes elsewhere), but treating it like 1.7.10 here is safe.
-        PaletteFormat::Legacy17 | PaletteFormat::Modern => LegacyChunkData::from_bytes(bytes),
-    }
-}
-
-/// Region-level driver for the legacy renderer — mirrors the modern
-/// `render_region` function but operates on `LegacyChunkData`. The
-/// `chunk_format` selects the parser.
-pub fn render_legacy_region(
-    x: RCoord,
-    z: RCoord,
-    loader: &dyn RegionLoader,
-    renderer: LegacyTopShadeRenderer,
-    chunk_format: PaletteFormat,
-) -> Result<Option<RegionMap>, String> {
-    let mut map = RegionMap::new(x, z, [0u8; 4]);
-
-    let mut region = match loader.region(x, z)? {
-        Some(r) => r,
-        None => return Ok(None),
-    };
-
-    // Cache the last row of chunks from the region immediately above for
-    // top-shading continuity across region boundaries.
-    let mut cache: [Option<LegacyChunkData>; 32] = Default::default();
-    if let Ok(Some(mut r)) = loader.region(x, RCoord(z.0 - 1)) {
-        for (cx, entry) in cache.iter_mut().enumerate() {
-            *entry = r
-                .read_chunk(cx, 31)
-                .ok()
-                .flatten()
-                .and_then(|b| decode_chunk(&b, chunk_format).ok());
-        }
-    }
-
-    for cz in 0usize..32 {
-        for (cx, cache) in cache.iter_mut().enumerate() {
-            let data = map.chunk_mut_by_coord(CCoord(cx as isize), CCoord(cz as isize));
-
-            let chunk_bytes = region
-                .read_chunk(cx, cz)
-                .map_err(|e| format!("Failed to read chunk: {}", e))?;
-            let chunk_bytes = match chunk_bytes {
-                Some(b) => b,
-                None => continue,
-            };
-
-            let chunk = match decode_chunk(&chunk_bytes, chunk_format) {
-                Ok(c) => c,
-                Err(e) => {
-                    log::warn!("Skipping malformed legacy chunk ({},{}): {}", cx, cz, e);
-                    continue;
-                }
-            };
-
-            let rendered = renderer.render(&chunk, cache.as_ref());
-            data.copy_from_slice(&rendered);
-            *cache = Some(chunk);
-        }
-    }
-
-    Ok(Some(map))
 }

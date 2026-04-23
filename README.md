@@ -27,7 +27,7 @@ mcmap heightmap --region r.0.0.mca --output heightmap.png
 mcmap analyze --region /world/region --palette palette.json --show-counts
 
 # Generate palette from Minecraft JAR (and optionally mod jars)
-mcmap gen-palette -p /path/to/1.20.1.jar --output palette.json
+mcmap gen-palette modern -p /path/to/1.20.1.jar --output palette.json
 ```
 
 ## Examples
@@ -135,12 +135,25 @@ mcmap analyze -r /world/region -p palette.json
 mcmap analyze -r /world/region -p palette.json --show-counts
 ```
 
-### `gen-palette` - Generate palette from Minecraft and mod jars
+### `gen-palette` - Generate block → color palette
 
-- Reads block colors directly from `.jar` / `.zip` resource packs — no extraction step.
-- Treats vanilla and mods uniformly: every pack is walked for `assets/<namespace>/{blockstates,models,textures}/...`.
-- Multiple packs can be layered, with the first-listed pack winning on conflict (list custom resource packs first, vanilla last).
-- Automatically adds missing common blocks (water, air, vine, grass, fern, etc.) and base colors for state variants (for O(1) lookup).
+One command, three version subcommands — pick whichever matches the target world:
+
+- `gen-palette modern` — 1.13+ worlds. Walks blockstate/model/texture JSONs inside `.jar` / `.zip` packs.
+- `gen-palette legacy` — 1.7.10 worlds, optionally with NotEnoughIDs (NEID). Uses the world's `level.dat` FML block registry plus a hand-curated vanilla `(name, meta) → texture` table; modded blocks fall back to filename matching.
+- `gen-palette forge112` — Forge 1.12.2 worlds running RoughlyEnoughIDs / JEID. Reads the modern `FML.Registries.minecraft:blocks.ids` registry, then runs the modern blockstate resolver for modded blocks (1.12.2 already ships blockstate/model JSONs) alongside the shared vanilla table.
+
+Common traits across all three:
+
+- Reads from `.jar` / `.zip` packs directly — no extraction step.
+- Multiple packs layer, first-listed wins on conflict (list custom resource packs first, vanilla last).
+- Recurses into `META-INF/jarjar/*.jar` (Forge's Jar-in-Jar bundling).
+- `--overrides <FILE>` applies last, beating every automatic tier; format is a JSON map of the palette's key scheme (`"ns:id"` for modern, `"id"` / `"id|meta"` for legacy/forge112) → `[r,g,b,a]`.
+- Transparent pixels are skipped when averaging RGB so sparse textures (vines, fences, crops, rails) keep their real color instead of being pulled toward black.
+
+The output palette's top-level shape tells `render` which chunk codec to use: flat `{"ns:name": [r,g,b,a]}` ⇒ modern; wrapped `{"format":"1.7.10" | "1.12.2", "blocks": {...}}` ⇒ legacy (with the format tag distinguishing the two on-disk chunk shapes).
+
+#### `gen-palette modern` — 1.13+
 
 **Resolution tiers** (first success wins per blockstate):
 
@@ -148,18 +161,8 @@ mcmap analyze -r /world/region -p palette.json --show-counts
 2. Raw-model fallback: any face (`up`→`down`→sides) from the variant's model, from any other variant of the same block (preferring `upper`/`top` keys for tall plants and double slabs), or from the first `apply` model of a multipart blockstate.
 3. Regex rewrites — generic patterns (`*:*_fence` → `*:block/*_planks`, same for walls and fence gates) apply across any namespace; hardcoded vanilla quirks (crops at final stage, `fire_0`, `bamboo_stalk`) apply to `minecraft:` only.
 4. Texture-path probe — direct lookup of `<ns>:block/<name>`.
-5. User overrides (`--overrides`) — final authoritative precedence.
-
-Transparent pixels are skipped when averaging RGB, so sparse textures (vines, fences, crops, rails) keep their real color instead of being pulled toward black.
-
-**Usage:**
-
-```bash
-mcmap gen-palette --pack <PATH>... --output palette.json
-    -p <PATH>           repeatable; .jar/.zip file, or directory containing .jar/.zip files
-    -o <FILE>           output path (default: palette.json)
-    --overrides <FILE>  optional JSON map of `"ns:id"` → `[r,g,b,a]`; applied last
-```
+5. Substring / generic-blockstate bridges for custom state mappers and dynamically-registered block families.
+6. User overrides (`--overrides`) — final authoritative precedence.
 
 Typical vanilla JAR locations:
 
@@ -171,47 +174,37 @@ Typical vanilla JAR locations:
 
 ```bash
 # Vanilla only
-mcmap gen-palette -p ~/.minecraft/versions/1.20.1/1.20.1.jar -o palette.json
+mcmap gen-palette modern -p ~/.minecraft/versions/1.20.1/1.20.1.jar -o palette.json
 
 # Vanilla + a mod jar (mod blocks appear as `create:cogwheel`, etc.)
-mcmap gen-palette \
+mcmap gen-palette modern \
   -p create-0.5.jar \
   -p ~/.minecraft/versions/1.20.1/1.20.1.jar \
   -o palette.json
 
 # Point at your server's mods directory (every .jar inside is loaded)
-mcmap gen-palette -p ./server/mods -p 1.20.1.jar -o palette.json
+mcmap gen-palette modern -p ./server/mods -p 1.20.1.jar -o palette.json
 
 # Custom resource pack overrides vanilla block colors
-mcmap gen-palette -p my_pack.zip -p 1.20.1.jar -o palette.json
+mcmap gen-palette modern -p my_pack.zip -p 1.20.1.jar -o palette.json
 ```
 
-### `gen-palette-legacy` - Generate palette for pre-1.13 worlds (1.7.10)
+#### `gen-palette legacy` — 1.7.10 (optionally NEID)
 
-1.7.10 has no blockstate/model JSONs — block rendering is hard-coded in Java, so there is no mechanical way to derive a texture from a block name. `gen-palette-legacy` takes a different approach:
+1.7.10 has no blockstate/model JSONs — block rendering is hard-coded in Java. The legacy path works as follows:
 
-1. Reads the FML block registry from the world's `level.dat` (the numeric id → `namespace:name` mapping is world-specific and assigned when the world was first generated).
+1. Reads the FML block registry from the world's `level.dat` (numeric id → `namespace:name`, world-specific and assigned at first world generation).
 2. For each registered block:
-   - If it's `minecraft:*`, looks it up in a hand-curated `(name, meta) → texture_path` table covering the 100+ common 1.7.10 terrain blocks (see `src/commands/gen_palette_legacy/vanilla.rs`).
-   - Otherwise, filename-matches the local name against `assets/<namespace>/textures/blocks/*.png` in the mod jars (exact match, then case-insensitive, then stripped-prefix, then fuzzy substring).
-3. Averages the resolved texture, applies vanilla biome tints (grass/leaves/vines) and water/lava overrides, and emits a JSON palette keyed by `"id|meta"` or bare `"id"`.
+   - If `minecraft:*`, looks it up in a hand-curated `(name, meta) → texture_path` table covering the 100+ common 1.7.10 terrain blocks (shared with `forge112` under `src/commands/gen_palette/shared/vanilla_1x.rs`).
+   - Otherwise, filename-matches the local name against `assets/<namespace>/textures/blocks/*.png` in the mod jars (exact → case-insensitive → stripped-prefix → fuzzy substring).
+3. Averages the resolved texture, applies vanilla biome tints (grass/leaves/vines) + water/lava/air overrides, emits a JSON palette keyed by `"id|meta"` or bare `"id"`.
 
-The output palette is wrapped as `{"format":"1.7.10", "blocks": {...}}` so `render` auto-routes to the legacy codec. NotEnoughIDs chunks (with `Blocks16` / `Data16`) are handled transparently.
-
-**Usage:**
-
-```bash
-mcmap gen-palette-legacy \
-    --level-dat <WORLD>/level.dat \
-    --pack <mods-dir-or-jars>... \
-    --pack <1.7.10.jar> \
-    --output palette.json
-```
+NotEnoughIDs chunks (with `Blocks16` / `Data16` for 16-bit ids) are handled transparently by the renderer — no flag needed.
 
 **Example (a GTNH world):**
 
 ```bash
-mcmap gen-palette-legacy \
+mcmap gen-palette legacy \
     --level-dat /path/to/gtnh-world/level.dat \
     --pack ~/.minecraft/versions/'GT New Horizons'/mods \
     --pack ~/.minecraft/versions/'GT New Horizons'/1.7.10.jar \
@@ -220,34 +213,24 @@ mcmap gen-palette-legacy \
 mcmap render -r /path/to/gtnh-world/region -p gtnh-palette.json -o map.png
 ```
 
-Note that mod block → texture matching is best-effort. Many modded blocks with non-obvious internal names (GregTech machines, Thaumcraft runic blocks) will fall back to a generic gray. Use `--overrides` with a `{"id|meta": [r,g,b,a]}` JSON to pin specific blocks manually.
+Mod block → texture matching is best-effort. Many modded blocks with non-obvious internal names (GregTech machines, Thaumcraft runic blocks) fall back to a generic gray. Use `--overrides` with a `{"id|meta": [r,g,b,a]}` JSON to pin specific blocks manually.
 
-### `gen-palette-forge112` - Generate palette for Forge 1.12.2 worlds (with REI / JEID)
+#### `gen-palette forge112` — Forge 1.12.2 + REI / JEID
 
-Forge 1.12.2 modpacks running [RoughlyEnoughIDs](https://github.com/MineCrak/RoughlyEnoughIDs) (REI) or its predecessor [JustEnoughIDs](https://github.com/DimensionalDevelopment/JustEnoughIDs) (JEID) write a per-section block-state palette into each chunk and lift the 4096 numeric block-id ceiling to `Integer.MAX_VALUE - 1`. The on-disk shape is partway between vanilla 1.7.10 and 1.13+ — see [`docs/forge_1_12_2_rei.md`](./docs/forge_1_12_2_rei.md) for the full spec.
+[RoughlyEnoughIDs](https://github.com/MineCrak/RoughlyEnoughIDs) (REI) and its predecessor [JustEnoughIDs](https://github.com/DimensionalDevelopment/JustEnoughIDs) (JEID) write a per-section block-state palette into each chunk and lift the 4096 numeric block-id ceiling to `Integer.MAX_VALUE - 1`. The on-disk shape is partway between vanilla 1.7.10 and 1.13+ — see [`docs/forge_1_12_2_rei.md`](./docs/forge_1_12_2_rei.md) for the full spec.
 
 Pipeline:
 
-1. Reads the modern FML registry (`FML.Registries.minecraft:blocks.ids`) from `level.dat` for the world's numeric id → `namespace:name` map.
-2. For vanilla blocks (`minecraft:*`) reuses the curated `(name, meta) → texture` table from `gen-palette-legacy`. Texture filenames under `assets/minecraft/textures/blocks/` are stable between 1.7.10 and 1.12.2; the lookup probes both `block/` and `blocks/` forms automatically.
-3. For modded blocks runs the modern blockstate-aware resolver. Forge's `forge_marker: 1` blockstate format is recognized — a single default model is extracted and resolved through the parent chain, the same way standard blockstates are.
+1. Reads the modern FML registry (`FML.Registries.minecraft:blocks.ids`) from `level.dat`.
+2. Vanilla (`minecraft:*`) blocks reuse the shared `(name, meta) → texture` table. Texture filenames under `assets/minecraft/textures/blocks/` are stable between 1.7.10 and 1.12.2; the lookup probes both `block/` and `blocks/` forms automatically.
+3. Modded blocks run the modern blockstate-aware resolver (same code as `gen-palette modern`). Forge's `forge_marker: 1` blockstate format is recognized — the default model is extracted and resolved through the parent chain alongside standard blockstates.
 4. Applies vanilla biome tints (grass, leaves, vines) + special blocks (water/lava/air) keyed by registered name.
-5. Emits a JSON palette wrapped as `{"format":"1.12.2", "blocks": {"id": [r,g,b,a], "id|meta": [r,g,b,a], ...}}`. The `render` command auto-routes to the REI chunk decoder.
-
-**Usage:**
-
-```bash
-mcmap gen-palette-forge112 \
-    --level-dat <WORLD>/level.dat \
-    --pack <mods-dir-or-jars>... \
-    --pack <1.12.2.jar> \
-    --output palette.json
-```
+5. Emits `{"format":"1.12.2", "blocks": {"id": [r,g,b,a], "id|meta": [r,g,b,a], ...}}`. The `render` command auto-routes to the REI chunk decoder.
 
 **Example (a Nova-style 1.12.2 modpack):**
 
 ```bash
-mcmap gen-palette-forge112 \
+mcmap gen-palette forge112 \
     --level-dat /path/to/world/level.dat \
     --pack /path/to/modpack/mods \
     --pack /path/to/modpack/1.12.2.jar \
@@ -256,7 +239,7 @@ mcmap gen-palette-forge112 \
 mcmap render -r /path/to/world/region -p nova-palette.json -o map.png
 ```
 
-Same caveats as `gen-palette-legacy` apply to the modded-block fallback gray. Use `--overrides` with a `{"id|meta": [r,g,b,a]}` JSON to pin specific blocks manually.
+Same fallback-gray caveat as `gen-palette legacy` — use `--overrides` to pin specific blocks.
 
 ## External Stdout Integration
 

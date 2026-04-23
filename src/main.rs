@@ -15,26 +15,18 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Render region files to PNG overhead maps
+    /// Render region files to PNG overhead maps. Auto-detects palette format
+    /// (modern 1.13+, legacy 1.7.10, or Forge 1.12.2 REI).
     Render(commands::render::RenderArgs),
 
-    /// Render region files as height-based heatmaps
+    /// Render region files as height-based heatmaps. 1.13+ only.
     Heightmap(commands::heightmap::HeightmapArgs),
 
-    /// Analyze blocks in region files and find unknown blocks
+    /// Analyze blocks in region files and find unknown blocks. 1.13+ only.
     Analyze(commands::analyze::AnalyzeArgs),
 
-    /// Generate palette.json from Minecraft JAR assets (1.13+)
+    /// Generate palette.json — pick a version subcommand for the world type.
     GenPalette(commands::gen_palette::GenPaletteArgs),
-
-    /// Generate palette.json for a pre-1.13 world (1.7.10, optionally NEID).
-    /// Requires the world's level.dat and the mod jars loaded in that world.
-    GenPaletteLegacy(commands::gen_palette_legacy::GenPaletteLegacyArgs),
-
-    /// Generate palette.json for a Forge 1.12.2 world (RoughlyEnoughIDs / JEID
-    /// per-section palette format). Requires the world's level.dat and the mod
-    /// jars loaded in that world.
-    GenPaletteForge112(commands::gen_palette_forge112::GenPaletteForge112Args),
 }
 
 fn main() -> Result<()> {
@@ -49,7 +41,5 @@ fn main() -> Result<()> {
         Commands::Heightmap(args) => commands::heightmap::execute(args),
         Commands::Analyze(args) => commands::analyze::execute(args),
         Commands::GenPalette(args) => commands::gen_palette::execute(args),
-        Commands::GenPaletteLegacy(args) => commands::gen_palette_legacy::execute(args),
-        Commands::GenPaletteForge112(args) => commands::gen_palette_forge112::execute(args),
     }
 }

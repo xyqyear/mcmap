@@ -1,9 +1,10 @@
-// Palette generation for Forge 1.12.2 worlds (with RoughlyEnoughIDs / JEID).
+// `gen-palette forge112` — palette generation for Forge 1.12.2 worlds running
+// RoughlyEnoughIDs / JustEnoughIDs.
 //
 // 1.12.2 mods ship proper `assets/<ns>/blockstates/` and `models/` JSONs, so
-// we lean on the modern blockstate-aware resolver from `gen_palette` for
-// modded blocks. Vanilla blocks reuse the hand-curated 1.7.10 (id, meta)
-// table from `gen_palette_legacy::vanilla` — texture filenames under
+// modded block resolution reuses the modern blockstate-aware resolver from
+// `modern_pack`. Vanilla blocks reuse the hand-curated 1.7.10 (name, meta)
+// table from `shared::vanilla_1x` — texture filenames under
 // `assets/minecraft/textures/blocks/` are stable between 1.7.10 and 1.12.2,
 // only the directory plural ("blocks/" vs "block/") shifted in 1.13.
 //
@@ -19,8 +20,6 @@
 //   3. Apply biome tints (grass, leaves, vines) + special blocks
 //      (water/lava/air) keyed by registered name.
 //   4. Apply user overrides and write `format = "1.12.2"` palette JSON.
-//
-// See `docs/forge_1_12_2_rei.md` for the on-disk REI format spec.
 
 mod leveldat;
 
@@ -28,21 +27,20 @@ use clap::Args;
 use fastanvil::tex::{Blockstate, Renderer};
 use log::{debug, info};
 use std::collections::HashMap;
-use std::error::Error;
 use std::path::PathBuf;
 
-use crate::anvil::legacy::palette::{LegacyPaletteFile, Rgba};
-use crate::commands::gen_palette::color::avg_colour;
-use crate::commands::gen_palette::packs::load_packs;
-use crate::commands::gen_palette::resolve::{Counters, Resolver, default_regex_mappings};
-use crate::commands::gen_palette_legacy::vanilla;
-
+use super::modern_pack::{Counters, Resolver, default_regex_mappings, load_packs};
+use super::shared::color::avg_colour;
+use super::shared::overrides::{apply_overrides, load_overrides};
+use super::shared::vanilla_1x;
+use crate::anvil::legacy::palette::LegacyPaletteFile;
+use crate::anvil::palette::Rgba;
 use leveldat::load_fml_registry;
 
-type Result<T> = std::result::Result<T, Box<dyn Error>>;
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Args, Debug)]
-pub struct GenPaletteForge112Args {
+pub struct Forge112Args {
     /// Path to the world's `level.dat`. The modern FML block registry inside
     /// it (`FML.Registries.minecraft:blocks.ids`) defines the numeric block
     /// id ↔ name mapping the palette is keyed by.
@@ -76,7 +74,7 @@ struct Stats {
 
 const FALLBACK_GRAY: Rgba = [128, 128, 128, 255];
 
-pub fn execute(args: GenPaletteForge112Args) -> Result<()> {
+pub fn execute(args: Forge112Args) -> Result<()> {
     info!("Starting palette generation (Forge 1.12.2 / REI)");
     info!("Level.dat: {}", args.level_dat.display());
     info!("Packs ({}):", args.pack.len());
@@ -132,13 +130,13 @@ pub fn execute(args: GenPaletteForge112Args) -> Result<()> {
                 }
             };
 
-            // Vanilla path: hand-curated (meta → texture) table that's known
-            // to match 1.12.2 vanilla's getStateFromMeta output. Texture
-            // lookups probe both `block/` and `blocks/` forms because the
-            // table uses the 1.13+ `block/` convention but 1.12.2 vanilla's
-            // raw paths are `blocks/`.
+            // Vanilla path: hand-curated (meta → texture) table known to
+            // match 1.12.2 vanilla's getStateFromMeta. Texture lookups probe
+            // both `block/` and `blocks/` forms because the table uses the
+            // 1.13+ `block/` convention but 1.12.2 vanilla's raw paths are
+            // `blocks/`.
             if ns == "minecraft" {
-                let variants = vanilla::variants_for(local);
+                let variants = vanilla_1x::variants_for(local);
                 if !variants.is_empty() {
                     let mut first_color = None;
                     for (meta, tex_key) in variants {
@@ -159,9 +157,8 @@ pub fn execute(args: GenPaletteForge112Args) -> Result<()> {
                 }
             }
 
-            // Modded (or vanilla-not-in-table) path: run the modern resolver
-            // against the block's blockstate JSON. The blockstate may be
-            // variants (multiple keys) or multipart; pick the first variant's
+            // Modded (or vanilla-not-in-table): run the modern resolver
+            // against the block's blockstate JSON. Pick the first variant's
             // properties so the resolver can render an exact face.
             let probe_props = pools
                 .blockstates
@@ -181,10 +178,11 @@ pub fn execute(args: GenPaletteForge112Args) -> Result<()> {
         }
     }
 
-    postprocess_vanilla(&mut palette, &id_to_name);
+    vanilla_1x::apply_vanilla_postprocess(&mut palette, &id_to_name);
 
     if let Some(ref path) = args.overrides {
-        let n = apply_overrides(&mut palette, path)?;
+        let overrides = load_overrides(path)?;
+        let n = apply_overrides(&mut palette, overrides);
         info!("Applied {} override entries", n);
     }
 
@@ -211,7 +209,7 @@ pub fn execute(args: GenPaletteForge112Args) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(&file)?;
     std::fs::write(&args.output, &bytes)?;
     info!(
-        "\u{2713} Forge 1.12.2 palette generation complete — {} entries written to {}",
+        "Forge 1.12.2 palette generation complete — {} entries written to {}",
         file.blocks.len(),
         args.output.display()
     );
@@ -226,10 +224,10 @@ fn sort_by_id(blocks: &HashMap<u32, String>) -> Vec<(u32, &str)> {
 }
 
 /// Try a texture key in both 1.13+ (`block/`) and 1.12.2-vanilla (`blocks/`)
-/// forms. The vanilla 1.7.10 table this codebase already maintains uses the
-/// `block/` form, but the modern packs loader keeps texture entries' paths
-/// raw — so a vanilla 1.12.2 jar exposes them under `blocks/`. Probing both
-/// avoids needing two parallel tables.
+/// forms. The vanilla 1.7.10 table this codebase shares uses the `block/`
+/// form, but the modern packs loader keeps texture entries' paths raw — so
+/// a vanilla 1.12.2 jar exposes them under `blocks/`. Probing both avoids
+/// needing two parallel tables.
 fn lookup_vanilla_texture(
     textures: &HashMap<String, fastanvil::tex::Texture>,
     key: &str,
@@ -263,87 +261,4 @@ fn swap_block_blocks(key: &str) -> Option<String> {
     } else {
         None
     }
-}
-
-fn postprocess_vanilla(palette: &mut HashMap<String, Rgba>, id_to_name: &HashMap<u32, String>) {
-    let grass_tint: Rgba = [124, 189, 107, 255];
-    let foliage_tint: Rgba = [84, 130, 54, 255];
-    let vine_tint: Rgba = [106, 136, 44, 200];
-
-    for (id, name) in id_to_name {
-        let (_ns, local) = match name.split_once(':') {
-            Some(p) => p,
-            None => continue,
-        };
-        match local {
-            "air" => set_block_color(palette, *id, [0, 0, 0, 0]),
-            "water" | "flowing_water" => set_block_color(palette, *id, [63, 118, 228, 180]),
-            "lava" | "flowing_lava" => set_block_color(palette, *id, [207, 78, 0, 255]),
-            "grass" | "mycelium" => multiply_block_color(palette, *id, grass_tint),
-            "tallgrass" | "fern" | "double_plant" => {
-                multiply_block_color(palette, *id, grass_tint)
-            }
-            "leaves" | "leaves2" | "waterlily" => {
-                multiply_block_color(palette, *id, foliage_tint)
-            }
-            "vine" => multiply_block_color(palette, *id, vine_tint),
-            _ => {}
-        }
-    }
-}
-
-fn set_block_color(palette: &mut HashMap<String, Rgba>, id: u32, color: Rgba) {
-    let prefix_eq = format!("{}", id);
-    let prefix_pipe = format!("{}|", id);
-    let mut matching: Vec<String> = palette
-        .keys()
-        .filter(|k| *k == &prefix_eq || k.starts_with(&prefix_pipe))
-        .cloned()
-        .collect();
-    matching.push(prefix_eq);
-    for k in matching {
-        palette.insert(k, color);
-    }
-}
-
-fn multiply_block_color(palette: &mut HashMap<String, Rgba>, id: u32, tint: Rgba) {
-    let prefix_eq = format!("{}", id);
-    let prefix_pipe = format!("{}|", id);
-    let keys: Vec<String> = palette
-        .keys()
-        .filter(|k| *k == &prefix_eq || k.starts_with(&prefix_pipe))
-        .cloned()
-        .collect();
-    for k in keys {
-        if let Some(existing) = palette.get(&k).copied() {
-            palette.insert(k, multiply_rgba(existing, tint));
-        }
-    }
-}
-
-fn multiply_rgba(a: Rgba, b: Rgba) -> Rgba {
-    [
-        mul_channel(a[0], b[0]),
-        mul_channel(a[1], b[1]),
-        mul_channel(a[2], b[2]),
-        mul_channel(a[3], b[3]),
-    ]
-}
-
-#[inline]
-fn mul_channel(a: u8, b: u8) -> u8 {
-    (((a as u16) * (b as u16)) / 255) as u8
-}
-
-fn apply_overrides(
-    palette: &mut HashMap<String, Rgba>,
-    path: &std::path::Path,
-) -> Result<usize> {
-    let bytes = std::fs::read(path)?;
-    let overrides: HashMap<String, [u8; 4]> = serde_json::from_slice(&bytes)?;
-    let n = overrides.len();
-    for (k, v) in overrides {
-        palette.insert(k, v);
-    }
-    Ok(n)
 }
