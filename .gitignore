@@ -2,3 +2,4 @@
 *.mca
 .claude
 /docs
+__pycache__
