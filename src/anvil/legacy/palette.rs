@@ -1,8 +1,11 @@
-// Palette for pre-1.13 (1.7.10 + NEID) worlds.
+// Palette for pre-1.13 worlds (1.7.10 + NEID, or Forge 1.12.2 + REI).
 //
 // Keyed by numeric block ID and (optionally) metadata. The JSON on disk is
-// wrapped with a `"format": "1.7.10"` sentinel so the renderer can distinguish
-// it from the flat-map 1.13+ palette.
+// wrapped with a `"format"` sentinel — `"1.7.10"` or `"1.12.2"` — so the
+// renderer can pick the matching chunk decoder.
+//
+// The lookup shape is the same for both formats: every block decodes to an
+// `(id, meta)` pair regardless of what the on-disk chunk encoding looked like.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -57,18 +60,21 @@ impl LegacyPalette {
         }
     }
 
-    /// Load + parse a `.json` palette from disk.
+    /// Load + parse a `.json` palette from disk. Accepts both legacy formats
+    /// (1.7.10 vanilla/NEID and 1.12.2 REI) — the in-memory shape is the same;
+    /// the format string only matters at the renderer level for chunk-decoder
+    /// dispatch.
     pub fn load(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let bytes = std::fs::read(path)?;
         let file: LegacyPaletteFile = serde_json::from_slice(&bytes)?;
-        if file.format != "1.7.10" {
-            return Err(format!(
-                "Expected legacy palette with format='1.7.10', got '{}'",
-                file.format
+        match file.format.as_str() {
+            "1.7.10" | "1.12.2" => Ok(Self::from_file(file)),
+            other => Err(format!(
+                "Expected legacy palette with format='1.7.10' or '1.12.2', got '{}'",
+                other
             )
-            .into());
+            .into()),
         }
-        Ok(Self::from_file(file))
     }
 
     /// Most specific match wins: `id|meta` → `id` → transparent default.
@@ -114,13 +120,21 @@ pub fn detect_palette_format(
     }
     let probe: Probe = serde_json::from_slice(&bytes)?;
     match probe.format.as_deref() {
-        Some("1.7.10") => Ok(PaletteFormat::Legacy),
+        Some("1.7.10") => Ok(PaletteFormat::Legacy17),
+        Some("1.12.2") => Ok(PaletteFormat::Forge112),
         _ => Ok(PaletteFormat::Modern),
     }
 }
 
+/// Which on-disk format a palette JSON came from. The renderer uses this to
+/// pick the chunk decoder; the in-memory `LegacyPalette` is identical for
+/// the two legacy variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaletteFormat {
     Modern,
-    Legacy,
+    /// 1.7.10 vanilla, optionally with NotEnoughIDs (Blocks16/Data16).
+    Legacy17,
+    /// Forge 1.12.2 with RoughlyEnoughIDs / JustEnoughIDs (per-section
+    /// Palette IntArray).
+    Forge112,
 }

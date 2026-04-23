@@ -48,8 +48,8 @@ Color-coded by elevation (default gradient: black → blue → green → red):
 
 ### `render` - Render region files to PNG maps
 
-- Supports **1.13+** chunk format (fastanvil) and **1.7.10** (with optional NotEnoughIDs extended block IDs)
-- Auto-detects the palette format — a modern palette routes through the 1.13+ pipeline, a `"format":"1.7.10"` palette triggers the legacy path
+- Supports **1.13+** chunk format (fastanvil), **1.7.10** (with optional NotEnoughIDs extended block IDs), and **Forge 1.12.2** (with RoughlyEnoughIDs / JustEnoughIDs per-section palette format)
+- Auto-detects the palette format — modern palette routes through the 1.13+ pipeline, `"format":"1.7.10"` triggers the 1.7.10 legacy path, `"format":"1.12.2"` triggers the REI/JEID legacy path
 - Parallel processing for multiple regions
 - Output to file or stdout (for HTTP APIs)
 
@@ -221,6 +221,42 @@ mcmap render -r /path/to/gtnh-world/region -p gtnh-palette.json -o map.png
 ```
 
 Note that mod block → texture matching is best-effort. Many modded blocks with non-obvious internal names (GregTech machines, Thaumcraft runic blocks) will fall back to a generic gray. Use `--overrides` with a `{"id|meta": [r,g,b,a]}` JSON to pin specific blocks manually.
+
+### `gen-palette-forge112` - Generate palette for Forge 1.12.2 worlds (with REI / JEID)
+
+Forge 1.12.2 modpacks running [RoughlyEnoughIDs](https://github.com/MineCrak/RoughlyEnoughIDs) (REI) or its predecessor [JustEnoughIDs](https://github.com/DimensionalDevelopment/JustEnoughIDs) (JEID) write a per-section block-state palette into each chunk and lift the 4096 numeric block-id ceiling to `Integer.MAX_VALUE - 1`. The on-disk shape is partway between vanilla 1.7.10 and 1.13+ — see [`docs/forge_1_12_2_rei.md`](./docs/forge_1_12_2_rei.md) for the full spec.
+
+Pipeline:
+
+1. Reads the modern FML registry (`FML.Registries.minecraft:blocks.ids`) from `level.dat` for the world's numeric id → `namespace:name` map.
+2. For vanilla blocks (`minecraft:*`) reuses the curated `(name, meta) → texture` table from `gen-palette-legacy`. Texture filenames under `assets/minecraft/textures/blocks/` are stable between 1.7.10 and 1.12.2; the lookup probes both `block/` and `blocks/` forms automatically.
+3. For modded blocks runs the modern blockstate-aware resolver. Forge's `forge_marker: 1` blockstate format is recognized — a single default model is extracted and resolved through the parent chain, the same way standard blockstates are.
+4. Applies vanilla biome tints (grass, leaves, vines) + special blocks (water/lava/air) keyed by registered name.
+5. Emits a JSON palette wrapped as `{"format":"1.12.2", "blocks": {"id": [r,g,b,a], "id|meta": [r,g,b,a], ...}}`. The `render` command auto-routes to the REI chunk decoder.
+
+**Usage:**
+
+```bash
+mcmap gen-palette-forge112 \
+    --level-dat <WORLD>/level.dat \
+    --pack <mods-dir-or-jars>... \
+    --pack <1.12.2.jar> \
+    --output palette.json
+```
+
+**Example (a Nova-style 1.12.2 modpack):**
+
+```bash
+mcmap gen-palette-forge112 \
+    --level-dat /path/to/world/level.dat \
+    --pack /path/to/modpack/mods \
+    --pack /path/to/modpack/1.12.2.jar \
+    --output nova-palette.json
+
+mcmap render -r /path/to/world/region -p nova-palette.json -o map.png
+```
+
+Same caveats as `gen-palette-legacy` apply to the modded-block fallback gray. Use `--overrides` with a `{"id|meta": [r,g,b,a]}` JSON to pin specific blocks manually.
 
 ## External Stdout Integration
 

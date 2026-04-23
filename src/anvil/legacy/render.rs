@@ -12,7 +12,8 @@
 //      higher" trick for pseudo-3D relief.
 
 use super::chunk::LegacyChunkData;
-use super::palette::{LegacyPalette, Rgba};
+use super::chunk_forge112;
+use super::palette::{LegacyPalette, PaletteFormat, Rgba};
 use crate::anvil::region::{CCoord, RCoord, RegionLoader};
 use crate::anvil::render::RegionMap;
 
@@ -172,13 +173,27 @@ fn scale(c: u8, mul: u16) -> u8 {
     ((c as u16 * mul) / 255) as u8
 }
 
+/// Decode a legacy chunk's NBT bytes using the parser appropriate for the
+/// active palette format. Returns `Err` only on a real parse failure — chunks
+/// with wrong-format payloads end up as `Err` at the type-mismatch level.
+fn decode_chunk(bytes: &[u8], format: PaletteFormat) -> Result<LegacyChunkData, String> {
+    match format {
+        PaletteFormat::Forge112 => chunk_forge112::from_bytes(bytes),
+        // Modern shouldn't reach the legacy renderer at all (the dispatcher
+        // routes elsewhere), but treating it like 1.7.10 here is safe.
+        PaletteFormat::Legacy17 | PaletteFormat::Modern => LegacyChunkData::from_bytes(bytes),
+    }
+}
+
 /// Region-level driver for the legacy renderer — mirrors the modern
-/// `render_region` function but operates on `LegacyChunkData`.
+/// `render_region` function but operates on `LegacyChunkData`. The
+/// `chunk_format` selects the parser.
 pub fn render_legacy_region(
     x: RCoord,
     z: RCoord,
     loader: &dyn RegionLoader,
     renderer: LegacyTopShadeRenderer,
+    chunk_format: PaletteFormat,
 ) -> Result<Option<RegionMap>, String> {
     let mut map = RegionMap::new(x, z, [0u8; 4]);
 
@@ -196,7 +211,7 @@ pub fn render_legacy_region(
                 .read_chunk(cx, 31)
                 .ok()
                 .flatten()
-                .and_then(|b| LegacyChunkData::from_bytes(&b).ok());
+                .and_then(|b| decode_chunk(&b, chunk_format).ok());
         }
     }
 
@@ -212,7 +227,7 @@ pub fn render_legacy_region(
                 None => continue,
             };
 
-            let chunk = match LegacyChunkData::from_bytes(&chunk_bytes) {
+            let chunk = match decode_chunk(&chunk_bytes, chunk_format) {
                 Ok(c) => c,
                 Err(e) => {
                     log::warn!("Skipping malformed legacy chunk ({},{}): {}", cx, cz, e);

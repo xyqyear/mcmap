@@ -7,15 +7,15 @@ use std::path::{Path, PathBuf};
 use zip::ZipArchive;
 
 use super::Result;
-use super::raw::{RawBlockstate, RawModel};
+use super::raw::{RawBlockstate, RawModel, parse_blockstate_lenient};
 
 #[derive(Default)]
-pub(super) struct Pools {
-    pub(super) blockstates: HashMap<String, Blockstate>,
-    pub(super) models: HashMap<String, Model>,
-    pub(super) textures: HashMap<String, Texture>,
-    pub(super) raw_blockstates: HashMap<String, RawBlockstate>,
-    pub(super) raw_models: HashMap<String, RawModel>,
+pub(crate) struct Pools {
+    pub(crate) blockstates: HashMap<String, Blockstate>,
+    pub(crate) models: HashMap<String, Model>,
+    pub(crate) textures: HashMap<String, Texture>,
+    pub(crate) raw_blockstates: HashMap<String, RawBlockstate>,
+    pub(crate) raw_models: HashMap<String, RawModel>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -160,10 +160,12 @@ fn load_archive_from_reader<R: Read + Seek>(
                     }
                     Err(e) => debug!("Failed to parse blockstate {}: {}", name, e),
                 }
-                // Parse raw form for fallback access. Best-effort: a failure
-                // here just means this block won't benefit from multipart /
-                // side-face fallback, not that the whole pipeline breaks.
-                if let Ok(raw) = serde_json::from_slice::<RawBlockstate>(&buf) {
+                // Parse raw form for fallback access. Lenient: handles both
+                // vanilla `{variants}/{multipart}` and Forge 1.12.2's
+                // `{forge_marker: 1, defaults, variants}` shape — most 1.12.2
+                // mods ship the latter, and falling through here is what makes
+                // those blocks resolvable beyond bare-id gray.
+                if let Some(raw) = parse_blockstate_lenient(&buf) {
                     pools.raw_blockstates.insert(key, raw);
                 }
             }
@@ -248,7 +250,7 @@ fn load_archive(path: &Path, pools: &mut Pools) -> Result<()> {
     load_archive_from_reader(&label, file, pools)
 }
 
-pub(super) fn load_packs(paths: &[PathBuf]) -> Result<Pools> {
+pub(crate) fn load_packs(paths: &[PathBuf]) -> Result<Pools> {
     let archives = expand_packs(paths)?;
     if archives.is_empty() {
         return Err("No pack files to load (did you pass empty directories?)".into());

@@ -67,10 +67,12 @@ struct Rectangle {
 }
 
 /// Opaque palette holder — lets us carry both variants through the render
-/// pipeline without loading both unconditionally.
+/// pipeline without loading both unconditionally. The `Legacy` arm carries
+/// the on-disk format tag (1.7.10 vs 1.12.2 REI) so the chunk decoder picks
+/// the right parser.
 enum AnyPalette {
     Modern(RenderedPalette),
-    Legacy(LegacyPalette),
+    Legacy(LegacyPalette, PaletteFormat),
 }
 
 fn parse_region_filename(filename: &str) -> Option<(RCoord, RCoord)> {
@@ -113,7 +115,8 @@ fn auto_size(coords: &[(RCoord, RCoord)]) -> Option<Rectangle> {
 
 fn load_palette(path: &Path) -> Result<AnyPalette> {
     info!("Loading palette from: {}", path.display());
-    match detect_palette_format(path)? {
+    let format = detect_palette_format(path)?;
+    match format {
         PaletteFormat::Modern => {
             let bytes = std::fs::read(path)?;
             let blockstates: std::collections::HashMap<String, Rgba> =
@@ -124,10 +127,18 @@ fn load_palette(path: &Path) -> Result<AnyPalette> {
             );
             Ok(AnyPalette::Modern(RenderedPalette::new(blockstates)))
         }
-        PaletteFormat::Legacy => {
+        PaletteFormat::Legacy17 => {
             let pal = LegacyPalette::load(path)?;
             info!("Palette loaded: {} entries (legacy / 1.7.10)", pal.len());
-            Ok(AnyPalette::Legacy(pal))
+            Ok(AnyPalette::Legacy(pal, format))
+        }
+        PaletteFormat::Forge112 => {
+            let pal = LegacyPalette::load(path)?;
+            info!(
+                "Palette loaded: {} entries (legacy / Forge 1.12.2 + REI)",
+                pal.len()
+            );
+            Ok(AnyPalette::Legacy(pal, format))
         }
     }
 }
@@ -172,9 +183,9 @@ fn render_one(
             let drawer = TopShadeRenderer::new(p, height_mode);
             Ok(render_region(x, z, loader, drawer)?)
         }
-        AnyPalette::Legacy(p) => {
+        AnyPalette::Legacy(p, format) => {
             let drawer = LegacyTopShadeRenderer::new(p);
-            Ok(render_legacy_region(x, z, loader, drawer)?)
+            Ok(render_legacy_region(x, z, loader, drawer, *format)?)
         }
     }
 }

@@ -2,6 +2,7 @@
 
 pub mod analyze;
 pub mod gen_palette;
+pub mod gen_palette_forge112;
 pub mod gen_palette_legacy;
 pub mod heightmap;
 pub mod render;

@@ -30,6 +30,11 @@ enum Commands {
     /// Generate palette.json for a pre-1.13 world (1.7.10, optionally NEID).
     /// Requires the world's level.dat and the mod jars loaded in that world.
     GenPaletteLegacy(commands::gen_palette_legacy::GenPaletteLegacyArgs),
+
+    /// Generate palette.json for a Forge 1.12.2 world (RoughlyEnoughIDs / JEID
+    /// per-section palette format). Requires the world's level.dat and the mod
+    /// jars loaded in that world.
+    GenPaletteForge112(commands::gen_palette_forge112::GenPaletteForge112Args),
 }
 
 fn main() -> Result<()> {
@@ -45,5 +50,6 @@ fn main() -> Result<()> {
         Commands::Analyze(args) => commands::analyze::execute(args),
         Commands::GenPalette(args) => commands::gen_palette::execute(args),
         Commands::GenPaletteLegacy(args) => commands::gen_palette_legacy::execute(args),
+        Commands::GenPaletteForge112(args) => commands::gen_palette_forge112::execute(args),
     }
 }

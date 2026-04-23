@@ -18,7 +18,7 @@
 mod leveldat;
 mod packs;
 mod resolve;
-mod vanilla;
+pub(crate) mod vanilla;
 
 use clap::Args;
 use log::{debug, info};

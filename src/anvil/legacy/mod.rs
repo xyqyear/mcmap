@@ -1,14 +1,21 @@
-// Pre-1.13 chunk handling (1.7.10 + NotEnoughIDs).
+// Pre-1.13 chunk handling.
 //
-// Vanilla 1.7.10 stores block IDs as `Blocks` (u8) plus an optional `Add`
-// nibble array for the top 4 bits (12-bit IDs, 0..4095). NotEnoughIDs replaces
-// those with `Blocks16` — 4096 big-endian u16s — and extends metadata the same
-// way via `Data16`. This module parses both layouts.
+// Two on-disk formats land in the same in-memory shape (`LegacyChunkData` —
+// per-block (id, meta) pairs):
 //
-// Region-file framing is unchanged from 1.13+, so we keep using
-// `fastanvil::Region` for I/O and only introduce a new NBT parser here.
+//   - `chunk` — vanilla 1.7.10 / 1.12.2 + NotEnoughIDs (NEID). Block IDs come
+//     from `Blocks` (u8) plus an optional `Add` nibble (12-bit IDs); NEID's
+//     `Blocks16` / `Data16` (16-bit IDs/meta) take precedence when present.
+//   - `chunk_forge112` — Forge 1.12.2 with RoughlyEnoughIDs / JustEnoughIDs.
+//     Adds a per-section `Palette` int-array; `Blocks` and `Data` carry the
+//     high-8 / low-4 bits of an index into that palette. See
+//     `docs/forge_1_12_2_rei.md`.
+//
+// Region-file framing is unchanged across all of these, so I/O stays on
+// `fastanvil::Region`.
 
 pub mod chunk;
+pub mod chunk_forge112;
 pub mod palette;
 pub mod render;
 
