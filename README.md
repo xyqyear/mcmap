@@ -48,7 +48,7 @@ Color-coded by elevation (default gradient: black → blue → green → red):
 
 ### `render` - Render region files to PNG maps
 
-- Supports 1.7.10+ (Pre-1.13) and 1.13+ (Post-1.13) chunk formats
+- Supports 1.13+ chunk format
 - Parallel processing for multiple regions
 - Output to file or stdout (for HTTP APIs)
 
@@ -146,7 +146,7 @@ mcmap analyze -r /world/region -p palette.json --show-counts
 1. Render the top face of the block's model (`fastanvil` renderer).
 2. Raw-model fallback: any face (`up`→`down`→sides) from the variant's model, from any other variant of the same block (preferring `upper`/`top` keys for tall plants and double slabs), or from the first `apply` model of a multipart blockstate.
 3. Regex rewrites — generic patterns (`*:*_fence` → `*:block/*_planks`, same for walls and fence gates) apply across any namespace; hardcoded vanilla quirks (crops at final stage, `fire_0`, `bamboo_stalk`) apply to `minecraft:` only.
-4. Texture-path probe — direct lookup of `<ns>:block/<name>` (or pre-1.13 `<ns>:blocks/<name>`).
+4. Texture-path probe — direct lookup of `<ns>:block/<name>`.
 5. User overrides (`--overrides`) — final authoritative precedence.
 
 Transparent pixels are skipped when averaging RGB, so sparse textures (vines, fences, crops, rails) keep their real color instead of being pulled toward black.

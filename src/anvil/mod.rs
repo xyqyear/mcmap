@@ -1,7 +1,6 @@
-// Anvil format support for overhead map rendering
-// Extracted and simplified from fastanvil library
+// Anvil format support for overhead map rendering (1.13+).
+// Extracted and simplified from fastanvil library.
 
-mod block;
 pub mod chunk;
 pub mod region;
 mod render;

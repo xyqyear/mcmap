@@ -46,29 +46,19 @@ fn analyze_chunk_blocks(
 ) -> Result<()> {
     use crate::anvil::chunk::ChunkData;
 
-    // Parse chunk using our version-aware parser
-    match ChunkData::from_bytes(chunk_data) {
-        Ok(ChunkData::Post13(chunk)) => {
-            // Post-1.13 chunk - use fastanvil to get block names
-            let y_range = fastanvil::Chunk::y_range(chunk.inner());
+    let Ok(chunk) = ChunkData::from_bytes(chunk_data) else {
+        return Ok(());
+    };
 
-            for y in y_range {
-                for z in 0..16 {
-                    for x in 0..16 {
-                        if let Some(block) = fastanvil::Chunk::block(chunk.inner(), x, y, z) {
-                            let block_name = block.name().to_string();
-                            *blocks_found.entry(block_name).or_insert(0) += 1;
-                        }
-                    }
+    let y_range = fastanvil::Chunk::y_range(chunk.inner());
+    for y in y_range {
+        for z in 0..16 {
+            for x in 0..16 {
+                if let Some(block) = fastanvil::Chunk::block(chunk.inner(), x, y, z) {
+                    let block_name = block.name().to_string();
+                    *blocks_found.entry(block_name).or_insert(0) += 1;
                 }
             }
-        }
-        Ok(ChunkData::Pre13(_)) => {
-            // Pre-1.13 chunks are not supported by analyze command
-            // Skip silently
-        }
-        Err(_) => {
-            // Failed to parse, skip this chunk
         }
     }
 

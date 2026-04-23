@@ -1,6 +1,6 @@
-// Rendering chunks to overhead maps
+// Rendering chunks to overhead maps (1.13+).
 
-use super::chunk::{Chunk, ChunkData, HeightMode};
+use super::chunk::{ChunkData, HeightMode};
 use super::region::{CCoord, RCoord, RegionLoader};
 use std::collections::HashMap;
 
@@ -11,9 +11,9 @@ pub struct RenderedPalette {
     /// Map from block name (with optional state) to RGBA color.
     /// Kept for callers that query the palette directly (e.g. analyze command).
     pub blockstates: HashMap<String, Rgba>,
-    /// Fastanvil-compatible palette used for Post-1.13 chunk rendering.
-    /// Built once when the palette is loaded so chunk rendering does not
-    /// allocate a fresh one per chunk.
+    /// Fastanvil-compatible palette used for chunk rendering. Built once when
+    /// the palette is loaded so chunk rendering does not allocate a fresh one
+    /// per chunk.
     fa_palette: fastanvil::RenderedPalette,
 }
 
@@ -96,76 +96,11 @@ impl<'a> TopShadeRenderer<'a> {
     }
 
     pub fn render(&self, chunk: &ChunkData, north: Option<&ChunkData>) -> [Rgba; 16 * 16] {
-        // For Post-1.13 chunks, use fastanvil's rendering directly
-        if let super::chunk::ChunkData::Post13(post13) = chunk {
-            return self.render_post13(post13, north);
-        }
-
-        // For Pre-1.13 chunks: simple gray heightmap with shading
-        let mut data = [[0, 0, 0, 0]; 16 * 16];
-
-        for z in 0..16 {
-            for x in 0..16 {
-                let air_height = chunk.surface_height(x, z, self.height_mode);
-
-                // Use fixed gray color for all Pre-1.13 blocks
-                let colour = [128, 128, 128, 255];
-
-                let north_air_height = match z {
-                    0 => north
-                        .map(|c| c.surface_height(x, 15, self.height_mode))
-                        .unwrap_or(air_height),
-                    z => chunk.surface_height(x, z - 1, self.height_mode),
-                };
-                let colour = top_shade_colour(colour, air_height, north_air_height);
-
-                data[z * 16 + x] = colour;
-            }
-        }
-
-        data
-    }
-
-    fn render_post13(
-        &self,
-        chunk: &super::chunk::Post13Chunk,
-        north: Option<&ChunkData>,
-    ) -> [Rgba; 16 * 16] {
-        let fa_mode = match self.height_mode {
-            HeightMode::Trust => fastanvil::HeightMode::Trust,
-            HeightMode::Calculate => fastanvil::HeightMode::Calculate,
-        };
-
         let fa_renderer =
-            fastanvil::TopShadeRenderer::new(self.palette.fastanvil_palette(), fa_mode);
-
-        let north_fa = north.and_then(|n| {
-            if let super::chunk::ChunkData::Post13(p13) = n {
-                Some(p13.inner())
-            } else {
-                None
-            }
-        });
-
+            fastanvil::TopShadeRenderer::new(self.palette.fastanvil_palette(), self.height_mode);
+        let north_fa = north.map(|n| n.inner());
         fa_renderer.render(chunk.inner(), north_fa)
     }
-}
-
-fn top_shade_colour(colour: Rgba, height: isize, north_height: isize) -> Rgba {
-    let diff = height - north_height;
-
-    let shade = match diff.cmp(&0) {
-        std::cmp::Ordering::Greater => 0.8,
-        std::cmp::Ordering::Less => 1.2,
-        std::cmp::Ordering::Equal => 1.0,
-    };
-
-    [
-        (colour[0] as f32 * shade).min(255.0) as u8,
-        (colour[1] as f32 * shade).min(255.0) as u8,
-        (colour[2] as f32 * shade).min(255.0) as u8,
-        colour[3],
-    ]
 }
 
 /// Render a region to a map

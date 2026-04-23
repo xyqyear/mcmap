@@ -6,9 +6,7 @@ use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 
 use crate::anvil::{
-    CCoord, HeightMode, RCoord, RegionFileLoader, Rgba,
-    chunk::{Chunk, ChunkData},
-    region::RegionLoader,
+    CCoord, HeightMode, RCoord, RegionFileLoader, Rgba, chunk::ChunkData, region::RegionLoader,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -149,28 +147,15 @@ fn render_chunk_heightmap(
 
     for z in 0..16 {
         for x in 0..16 {
-            let air_height = chunk.surface_height(x, z, height_mode);
+            let air_height = fastanvil::Chunk::surface_height(chunk.inner(), x, z, height_mode);
             let block_height = air_height - 1;
 
-            // Check if there's actually a non-air block at the surface
-            let has_block = match chunk {
-                ChunkData::Post13(post13) => {
-                    // For Post-1.13, use fastanvil's block method
-                    if let Some(block) = fastanvil::Chunk::block(post13.inner(), x, block_height, z)
-                    {
-                        block.name() != "minecraft:air" && block.name() != "minecraft:cave_air"
-                    } else {
-                        false
-                    }
-                }
-                ChunkData::Pre13(_) => {
-                    // For Pre-1.13, check if block() returns None or is air
-                    if let Some(block) = chunk.block(x, block_height, z) {
-                        block.name != "minecraft:air"
-                    } else {
-                        false
-                    }
-                }
+            let has_block = if let Some(block) =
+                fastanvil::Chunk::block(chunk.inner(), x, block_height, z)
+            {
+                block.name() != "minecraft:air" && block.name() != "minecraft:cave_air"
+            } else {
+                false
             };
 
             if !has_block {

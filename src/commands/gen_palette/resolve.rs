@@ -159,21 +159,16 @@ pub(super) fn render_any_variant_of_block(
 }
 
 /// Last-resort fallback: look for a texture whose path mirrors the block ID.
-/// `mymod:steel_block` → try `mymod:block/steel_block`, then pre-1.13
-/// `mymod:blocks/steel_block`. Useful for mods whose blockstate/model JSONs
-/// are broken or unconventional but whose textures follow the standard layout.
+/// `mymod:steel_block` → try `mymod:block/steel_block`. Useful for mods whose
+/// blockstate/model JSONs are broken or unconventional but whose textures
+/// follow the standard layout.
 pub(super) fn probe_texture_by_name(
     block_name: &str,
     textures: &HashMap<String, Texture>,
 ) -> Option<Texture> {
     let (ns, name) = block_name.split_once(':')?;
-    for prefix in ["block", "blocks"] {
-        let candidate = format!("{}:{}/{}", ns, prefix, name);
-        if let Some(tex) = textures.get(&candidate) {
-            return Some(tex.clone());
-        }
-    }
-    None
+    let candidate = format!("{}:block/{}", ns, name);
+    textures.get(&candidate).cloned()
 }
 
 /// Per-tier success counters. Used only for the final resolution summary.

@@ -12,8 +12,7 @@
 //   2. regex rewrites — namespace-agnostic for generic patterns
 //      (fences→planks, walls→planks), minecraft-specific for vanilla quirks
 //      (crops at final stage, fire_0, bamboo_stalk, etc.).
-//   3. texture-path probe — direct lookup at `<ns>:block/<name>` or
-//      `<ns>:blocks/<name>` (pre-1.13 layout).
+//   3. texture-path probe — direct lookup at `<ns>:block/<name>`.
 //   4. user overrides JSON (`--overrides`) — final authoritative precedence,
 //      applied after all automatic resolution.
 
