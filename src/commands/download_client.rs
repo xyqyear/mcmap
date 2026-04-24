@@ -107,17 +107,26 @@ pub fn execute(args: DownloadClientArgs) -> Result<()> {
         meta.size, meta.sha1
     );
 
-    let tmp_path = std::env::temp_dir().join(format!(
-        "mcmap-client-{}-{}.jar.part",
-        entry.id,
-        std::process::id()
-    ));
+    let tmp_path = std::env::temp_dir().join(format!("mcmap-client-{}.jar.part", entry.id));
 
-    info!("Downloading to {}", tmp_path.display());
-    let result = download_and_verify(&http, meta, &tmp_path);
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp_path);
-        return result.map(|_| ());
+    match hash_existing(&tmp_path)? {
+        Some(existing) if existing == meta.sha1 => {
+            info!(
+                "Reusing cached tmp file at {} (sha1 matches)",
+                tmp_path.display()
+            );
+        }
+        Some(_) => {
+            info!(
+                "Cached tmp file at {} has wrong sha1; re-downloading",
+                tmp_path.display()
+            );
+            fetch_to_tmp(&http, meta, &tmp_path)?;
+        }
+        None => {
+            info!("Downloading to {}", tmp_path.display());
+            fetch_to_tmp(&http, meta, &tmp_path)?;
+        }
     }
 
     info!("Verification passed. Moving to {}", args.target.display());
@@ -129,6 +138,18 @@ pub fn execute(args: DownloadClientArgs) -> Result<()> {
         args.target.display()
     );
     Ok(())
+}
+
+fn fetch_to_tmp(
+    http: &reqwest::blocking::Client,
+    meta: &DownloadInfo,
+    tmp_path: &Path,
+) -> Result<()> {
+    let result = download_and_verify(http, meta, tmp_path);
+    if result.is_err() {
+        let _ = std::fs::remove_file(tmp_path);
+    }
+    result
 }
 
 fn download_and_verify(
@@ -160,11 +181,7 @@ fn download_and_verify(
         .into());
     }
 
-    let digest = hasher.finalize();
-    let mut sha1_hex = String::with_capacity(40);
-    for b in digest.iter() {
-        write!(&mut sha1_hex, "{:02x}", b).unwrap();
-    }
+    let sha1_hex = hex_digest(hasher.finalize().as_slice());
     if sha1_hex != meta.sha1 {
         return Err(format!(
             "Downloaded sha1 mismatch: expected {}, got {}",
@@ -173,6 +190,32 @@ fn download_and_verify(
         .into());
     }
     Ok(())
+}
+
+fn hash_existing(path: &Path) -> Result<Option<String>> {
+    let mut file = match File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    let mut hasher = Sha1::new();
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(Some(hex_digest(hasher.finalize().as_slice())))
+}
+
+fn hex_digest(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        write!(&mut s, "{:02x}", b).unwrap();
+    }
+    s
 }
 
 fn move_or_copy(src: &Path, dst: &Path) -> Result<()> {
