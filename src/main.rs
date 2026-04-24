@@ -24,6 +24,9 @@ enum Commands {
 
     /// Generate palette.json — pick a version subcommand for the world type.
     GenPalette(commands::gen_palette::GenPaletteArgs),
+
+    /// Download the Minecraft client jar for a given version from Mojang.
+    DownloadClient(commands::download_client::DownloadClientArgs),
 }
 
 fn main() -> Result<()> {
@@ -37,5 +40,6 @@ fn main() -> Result<()> {
         Commands::Render(args) => commands::render::execute(args),
         Commands::Analyze(args) => commands::analyze::execute(args),
         Commands::GenPalette(args) => commands::gen_palette::execute(args),
+        Commands::DownloadClient(args) => commands::download_client::execute(args),
     }
 }
