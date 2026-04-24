@@ -909,7 +909,7 @@ checksum = "08ab2867e3eeeca90e844d1940eab391c9dc5228783db2ed999acbc0a9ed375a"
 
 [[package]]
 name = "mcmap"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "clap",
  "env_logger",
