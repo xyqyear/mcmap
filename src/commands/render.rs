@@ -50,6 +50,11 @@ pub struct RenderArgs {
     /// Only valid with --split (requires a 1:1 region-to-file mapping).
     #[arg(long, default_value_t = false, requires = "split")]
     preserve_mtime: bool,
+
+    /// Number of worker threads for parallel region rendering.
+    /// Defaults to the number of logical CPUs.
+    #[arg(short = 'j', long, value_name = "N")]
+    threads: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -157,6 +162,17 @@ fn emit_phase(phase: &str) {
 
 pub fn execute(args: RenderArgs) -> Result<()> {
     let total_start = std::time::Instant::now();
+
+    if let Some(n) = args.threads {
+        if n == 0 {
+            return Err("--threads must be >= 1".into());
+        }
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(n)
+            .build_global()
+            .map_err(|e| format!("Failed to configure thread pool: {}", e))?;
+        info!("Worker threads: {}", n);
+    }
 
     info!("Starting Minecraft map renderer");
     info!("Region path: {}", args.region.display());
