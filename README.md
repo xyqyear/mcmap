@@ -62,6 +62,10 @@ Renders blocks with their actual colors from the palette:
 # Basic rendering
 mcmap render -r region.mca -p palette.json -o map.png
 
+# Combine multiple sources — repeat -r for each folder or .mca file.
+# Duplicate coordinates across inputs are deduplicated (last wins).
+mcmap render -r /world/region -r /overrides/r.0.0.mca -p palette.json -o map.png
+
 # Split mode: save each region as its own PNG inside a directory
 # (names mirror the region's .mca file, e.g. r.0.0.mca -> r.0.0.png)
 mcmap render -r /world/region -p palette.json -o ./tiles --split

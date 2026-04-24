@@ -9,6 +9,7 @@ use clap::Args;
 use log::{error, info, warn};
 use rayon::prelude::*;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::util::{Rectangle, auto_size, parse_region_filename};
@@ -25,9 +26,10 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Args, Debug)]
 pub struct RenderArgs {
-    /// Path to a region folder or a single .mca file
-    #[arg(short, long)]
-    region: PathBuf,
+    /// Path to a region folder or .mca file. Repeat -r to combine multiple
+    /// sources; duplicate region coordinates are deduplicated (last wins).
+    #[arg(short, long, required = true)]
+    region: Vec<PathBuf>,
 
     /// Output PNG file path
     #[arg(short, long, default_value = "map.png")]
@@ -175,7 +177,9 @@ pub fn execute(args: RenderArgs) -> Result<()> {
     }
 
     info!("Starting Minecraft map renderer");
-    info!("Region path: {}", args.region.display());
+    for path in &args.region {
+        info!("Region path: {}", path.display());
+    }
 
     if args.split {
         info!("Output directory: {}", args.output.display());
@@ -191,52 +195,61 @@ pub fn execute(args: RenderArgs) -> Result<()> {
         HeightMode::Trust
     };
 
-    if !args.region.exists() {
-        error!("Region path does not exist: {}", args.region.display());
-        return Err(format!("Region path not found: {}", args.region.display()).into());
-    }
-
-    let (region_dir, coords) = if args.region.is_file() {
-        let filename = args
-            .region
-            .file_name()
-            .and_then(|s| s.to_str())
-            .ok_or("Invalid file name")?;
-
-        let (x, z) = parse_region_filename(filename)
-            .ok_or_else(|| format!("Invalid region file name: {}", filename))?;
-
-        info!(
-            "Rendering single region file: {} at coordinates ({}, {})",
-            filename, x.0, z.0
-        );
-
-        let parent = args
-            .region
-            .parent()
-            .ok_or("Could not get parent directory")?
-            .to_path_buf();
-
-        (parent, vec![(x, z)])
-    } else if args.region.is_dir() {
-        info!("Loading regions from directory: {}", args.region.display());
-        let loader = RegionFileLoader::new(args.region.clone());
-        let coords = loader.list()?;
-        info!("Found {} region files", coords.len());
-
-        if coords.is_empty() {
-            error!("No region files found in {}", args.region.display());
-            return Err("No region files found".into());
+    let mut entries_map: HashMap<(isize, isize), PathBuf> = HashMap::new();
+    for path in &args.region {
+        if !path.exists() {
+            error!("Region path does not exist: {}", path.display());
+            return Err(format!("Region path not found: {}", path.display()).into());
         }
 
-        (args.region.clone(), coords)
-    } else {
-        error!(
-            "Region path is neither a file nor a directory: {}",
-            args.region.display()
-        );
-        return Err(format!("Invalid region path: {}", args.region.display()).into());
-    };
+        if path.is_file() {
+            let filename = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .ok_or("Invalid file name")?;
+
+            let (x, z) = parse_region_filename(filename)
+                .ok_or_else(|| format!("Invalid region file name: {}", filename))?;
+
+            info!(
+                "Including region file: {} at coordinates ({}, {})",
+                filename, x.0, z.0
+            );
+
+            let parent = path
+                .parent()
+                .ok_or("Could not get parent directory")?
+                .to_path_buf();
+
+            entries_map.insert((x.0, z.0), parent);
+        } else if path.is_dir() {
+            info!("Loading regions from directory: {}", path.display());
+            let loader = RegionFileLoader::new(path.clone());
+            let dir_coords = loader.list()?;
+            info!("Found {} region files in {}", dir_coords.len(), path.display());
+            for (x, z) in dir_coords {
+                entries_map.insert((x.0, z.0), path.clone());
+            }
+        } else {
+            error!(
+                "Region path is neither a file nor a directory: {}",
+                path.display()
+            );
+            return Err(format!("Invalid region path: {}", path.display()).into());
+        }
+    }
+
+    if entries_map.is_empty() {
+        error!("No region files found across provided --region inputs");
+        return Err("No region files found".into());
+    }
+
+    let entries: Vec<(PathBuf, RCoord, RCoord)> = entries_map
+        .into_iter()
+        .map(|((x, z), parent)| (parent, RCoord(x), RCoord(z)))
+        .collect();
+    let coords: Vec<(RCoord, RCoord)> = entries.iter().map(|(_, x, z)| (*x, *z)).collect();
+    info!("Total unique regions: {}", entries.len());
 
     let palette_start = std::time::Instant::now();
     let pal = palette::load(&args.palette)?;
@@ -260,17 +273,17 @@ pub fn execute(args: RenderArgs) -> Result<()> {
             ty: "progress",
             phase: "regions_listed",
             elapsed_ms: None,
-            count: Some(coords.len()),
+            count: Some(entries.len()),
             bounds: None,
         });
 
         info!("Rendering regions (split mode)...");
         let render_start = std::time::Instant::now();
-        let saved: usize = coords
+        let saved: usize = entries
             .into_par_iter()
-            .map(|(x, z)| {
-                let loader = RegionFileLoader::new(region_dir.clone());
-                let src_path = region_dir.join(format!("r.{}.{}.mca", x.0, z.0));
+            .map(|(parent, x, z)| {
+                let loader = RegionFileLoader::new(parent.clone());
+                let src_path = parent.join(format!("r.{}.{}.mca", x.0, z.0));
                 match render_one(x, z, &loader, &pal, height_mode) {
                     Ok(Some(map)) => {
                         let img = region_to_image(&map);
@@ -382,10 +395,10 @@ pub fn execute(args: RenderArgs) -> Result<()> {
 
     info!("Rendering regions...");
     let render_start = std::time::Instant::now();
-    let region_maps: Vec<_> = coords
+    let region_maps: Vec<_> = entries
         .into_par_iter()
-        .filter_map(|(x, z)| {
-            let loader = RegionFileLoader::new(region_dir.clone());
+        .filter_map(|(parent, x, z)| {
+            let loader = RegionFileLoader::new(parent);
 
             if x < x_range.end && x >= x_range.start && z < z_range.end && z >= z_range.start {
                 match render_one(x, z, &loader, &pal, height_mode) {
