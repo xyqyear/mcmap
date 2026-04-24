@@ -26,15 +26,18 @@ mod leveldat;
 use clap::Args;
 use fastanvil::tex::{Blockstate, Renderer};
 use log::{debug, info};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use super::modern_pack::{Counters, Resolver, default_regex_mappings, load_packs};
 use super::shared::color::avg_colour;
 use super::shared::overrides::{apply_overrides, load_overrides};
+use super::shared::progress::PackLoadReport;
 use super::shared::vanilla_1x;
 use crate::anvil::legacy::palette::LegacyPaletteFile;
 use crate::anvil::palette::Rgba;
+use crate::output::emit_if_json;
 use leveldat::load_fml_registry;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -74,6 +77,117 @@ struct Stats {
 
 const FALLBACK_GRAY: Rgba = [128, 128, 128, 255];
 
+#[derive(Serialize)]
+struct RegistryLoadedEvent<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    phase: &'a str,
+    blocks: usize,
+}
+
+#[derive(Serialize)]
+struct PackLoadedEvent<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    phase: &'a str,
+    path: String,
+    index: usize,
+    total: usize,
+    blockstates_added: usize,
+    models_added: usize,
+    textures_added: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+struct PacksDoneEvent<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    phase: &'a str,
+    pack_count: usize,
+    blockstates: usize,
+    models: usize,
+    textures: usize,
+}
+
+#[derive(Serialize, Clone, Copy)]
+struct ResolverCounters {
+    rendered: usize,
+    side_fallback: usize,
+    particle: usize,
+    any_texture: usize,
+    regex_mapped: usize,
+    probed: usize,
+    substring: usize,
+    generic_blockstate: usize,
+}
+
+impl From<&Counters> for ResolverCounters {
+    fn from(c: &Counters) -> Self {
+        Self {
+            rendered: c.rendered,
+            side_fallback: c.side_fallback,
+            particle: c.particle,
+            any_texture: c.any_texture,
+            regex_mapped: c.mapped,
+            probed: c.probed,
+            substring: c.substring,
+            generic_blockstate: c.generic_blockstate,
+        }
+    }
+}
+
+#[derive(Serialize, Clone, Copy)]
+struct ClassificationCounters {
+    vanilla_table: usize,
+    modded_resolved: usize,
+    fallback_gray: usize,
+    skipped: usize,
+}
+
+impl From<&Stats> for ClassificationCounters {
+    fn from(s: &Stats) -> Self {
+        Self {
+            vanilla_table: s.vanilla_table,
+            modded_resolved: s.modded_resolved,
+            fallback_gray: s.fallback,
+            skipped: s.skipped,
+        }
+    }
+}
+
+#[derive(Serialize, Clone, Copy)]
+struct Forge112Counters {
+    classification: ClassificationCounters,
+    resolver: ResolverCounters,
+}
+
+#[derive(Serialize)]
+struct ResolvedEvent<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    phase: &'a str,
+    counters: Forge112Counters,
+}
+
+#[derive(Serialize)]
+struct OverridesAppliedEvent<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    phase: &'a str,
+    count: usize,
+}
+
+#[derive(Serialize)]
+struct ResultEvent<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    output: String,
+    entries: usize,
+    counters: Forge112Counters,
+}
+
 pub fn execute(args: Forge112Args) -> Result<()> {
     info!("Starting palette generation (Forge 1.12.2 / REI)");
     info!("Level.dat: {}", args.level_dat.display());
@@ -88,8 +202,33 @@ pub fn execute(args: Forge112Args) -> Result<()> {
 
     let registry = load_fml_registry(&args.level_dat)?;
     info!("FML registry: {} blocks", registry.blocks.len());
+    emit_if_json(&RegistryLoadedEvent {
+        ty: "progress",
+        phase: "registry_loaded",
+        blocks: registry.blocks.len(),
+    });
 
-    let pools = load_packs(&args.pack)?;
+    let pools = load_packs(&args.pack, |report: &PackLoadReport| {
+        emit_if_json(&PackLoadedEvent {
+            ty: "progress",
+            phase: "pack_loaded",
+            path: report.path.display().to_string(),
+            index: report.index,
+            total: report.total,
+            blockstates_added: report.blockstates_added,
+            models_added: report.models_added,
+            textures_added: report.textures_added,
+            error: report.error.as_deref(),
+        });
+    })?;
+    emit_if_json(&PacksDoneEvent {
+        ty: "progress",
+        phase: "packs_done",
+        pack_count: args.pack.len(),
+        blockstates: pools.blockstates.len(),
+        models: pools.models.len(),
+        textures: pools.textures.len(),
+    });
     let mut renderer = Renderer::new(
         pools.blockstates.clone(),
         pools.models.clone(),
@@ -180,10 +319,25 @@ pub fn execute(args: Forge112Args) -> Result<()> {
 
     vanilla_1x::apply_vanilla_postprocess(&mut palette, &id_to_name);
 
+    let forge_counters = Forge112Counters {
+        classification: ClassificationCounters::from(&stats),
+        resolver: ResolverCounters::from(&counters),
+    };
+    emit_if_json(&ResolvedEvent {
+        ty: "progress",
+        phase: "resolved",
+        counters: forge_counters,
+    });
+
     if let Some(ref path) = args.overrides {
         let overrides = load_overrides(path)?;
         let n = apply_overrides(&mut palette, overrides);
         info!("Applied {} override entries", n);
+        emit_if_json(&OverridesAppliedEvent {
+            ty: "progress",
+            phase: "overrides_applied",
+            count: n,
+        });
     }
 
     info!(
@@ -213,6 +367,12 @@ pub fn execute(args: Forge112Args) -> Result<()> {
         file.blocks.len(),
         args.output.display()
     );
+    emit_if_json(&ResultEvent {
+        ty: "result",
+        output: args.output.display().to_string(),
+        entries: file.blocks.len(),
+        counters: forge_counters,
+    });
 
     Ok(())
 }

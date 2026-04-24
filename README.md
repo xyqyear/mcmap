@@ -27,6 +27,21 @@ mcmap analyze --region /world/region --palette palette.json --show-counts
 mcmap gen-palette modern -p /path/to/1.20.1.jar --output palette.json
 ```
 
+## JSON output mode
+
+Every subcommand accepts a global `--json` flag that swaps the human log
+output for newline-delimited JSON events on stdout — one event per line,
+progress events streamed live and a terminal `result` (or `error`) at the
+end. Intended for wrappers, UIs, and CI pipelines that want to follow
+progress or capture structured summaries.
+
+```bash
+mcmap --json render -r /world/region -p palette.json -o map.png
+```
+
+See [`JSON_OUTPUT.md`](./JSON_OUTPUT.md) for the full schema — event
+shapes, phase identifiers, counter fields, and exit-code behavior.
+
 ## Examples
 
 ### Block-colored Render

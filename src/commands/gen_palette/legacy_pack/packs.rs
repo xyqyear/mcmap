@@ -11,6 +11,8 @@ use std::io::{Cursor, Read, Seek};
 use std::path::{Path, PathBuf};
 use zip::ZipArchive;
 
+use crate::commands::gen_palette::shared::progress::PackLoadReport;
+
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 /// One texture pack, indexed by `namespace:relative/path/without_ext`.
@@ -215,13 +217,17 @@ fn load_archive(path: &Path, pack: &mut TexturePack) -> Result<()> {
 
 /// Load every pack into its own `TexturePack`. Pack order is preserved for
 /// first-wins semantics during resolution (see `resolve_modded`).
-pub fn load_texture_packs(paths: &[PathBuf]) -> Result<Vec<TexturePack>> {
+pub fn load_texture_packs<F: FnMut(&PackLoadReport)>(
+    paths: &[PathBuf],
+    mut on_pack: F,
+) -> Result<Vec<TexturePack>> {
     let archives = expand_packs(paths)?;
     if archives.is_empty() {
         return Err("No pack files to load (did you pass empty directories?)".into());
     }
     let mut packs = Vec::with_capacity(archives.len());
-    for archive_path in &archives {
+    let total = archives.len();
+    for (i, archive_path) in archives.iter().enumerate() {
         let label = archive_path
             .file_name()
             .and_then(|s| s.to_str())
@@ -229,9 +235,22 @@ pub fn load_texture_packs(paths: &[PathBuf]) -> Result<Vec<TexturePack>> {
             .to_string();
         info!("Loading pack: {}", archive_path.display());
         let mut pack = TexturePack::new(label.clone());
-        if let Err(e) = load_archive(archive_path, &mut pack) {
-            warn!("Failed to load {}: {}", archive_path.display(), e);
-        }
+        let err = match load_archive(archive_path, &mut pack) {
+            Ok(()) => None,
+            Err(e) => {
+                warn!("Failed to load {}: {}", archive_path.display(), e);
+                Some(e.to_string())
+            }
+        };
+        on_pack(&PackLoadReport {
+            path: archive_path.clone(),
+            index: i + 1,
+            total,
+            blockstates_added: 0,
+            models_added: 0,
+            textures_added: pack.textures.len(),
+            error: err,
+        });
         packs.push(pack);
     }
     Ok(packs)

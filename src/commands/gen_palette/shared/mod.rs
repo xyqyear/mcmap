@@ -8,4 +8,5 @@
 
 pub mod color;
 pub mod overrides;
+pub mod progress;
 pub mod vanilla_1x;

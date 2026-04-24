@@ -2,6 +2,7 @@
 
 use clap::Args;
 use log::{error, info};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -9,6 +10,7 @@ use super::util::parse_region_filename;
 use crate::anvil::modern::ChunkData;
 use crate::anvil::region::RegionLoader;
 use crate::anvil::{RegionFileLoader, RenderedPalette, Rgba};
+use crate::output::{emit_if_json, is_json};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -25,6 +27,47 @@ pub struct AnalyzeArgs {
     /// Show block counts (how many times each unknown block appears)
     #[arg(long, default_value_t = false)]
     show_counts: bool,
+}
+
+#[derive(Serialize)]
+struct PaletteLoaded<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    phase: &'a str,
+    blockstates: usize,
+}
+
+#[derive(Serialize)]
+struct RegionsListed<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    phase: &'a str,
+    count: usize,
+}
+
+#[derive(Serialize)]
+struct ScanProgress<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    phase: &'a str,
+    regions_scanned: usize,
+    chunks_scanned: usize,
+}
+
+#[derive(Serialize)]
+struct UnknownBlock<'a> {
+    name: &'a str,
+    count: usize,
+}
+
+#[derive(Serialize)]
+struct AnalyzeResult<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    regions_scanned: usize,
+    chunks_scanned: usize,
+    unique_blocks: usize,
+    unknown_blocks: Vec<UnknownBlock<'a>>,
 }
 
 fn get_palette(path: &Path) -> Result<RenderedPalette> {
@@ -74,6 +117,11 @@ pub fn execute(args: AnalyzeArgs) -> Result<()> {
         "Palette contains {} block states",
         palette.blockstates.len()
     );
+    emit_if_json(&PaletteLoaded {
+        ty: "progress",
+        phase: "palette_loaded",
+        blockstates: palette.blockstates.len(),
+    });
 
     let coords = if args.region.is_file() {
         let filename = args
@@ -100,6 +148,12 @@ pub fn execute(args: AnalyzeArgs) -> Result<()> {
     } else {
         return Err(format!("Invalid region path: {}", args.region.display()).into());
     };
+
+    emit_if_json(&RegionsListed {
+        ty: "progress",
+        phase: "regions_listed",
+        count: coords.len(),
+    });
 
     let region_dir = if args.region.is_file() {
         args.region
@@ -152,6 +206,12 @@ pub fn execute(args: AnalyzeArgs) -> Result<()> {
                 "Scanned {} regions, {} chunks so far...",
                 regions_scanned, chunks_scanned
             );
+            emit_if_json(&ScanProgress {
+                ty: "progress",
+                phase: "scanning",
+                regions_scanned,
+                chunks_scanned,
+            });
         }
     }
 
@@ -167,6 +227,20 @@ pub fn execute(args: AnalyzeArgs) -> Result<()> {
         .map(|(name, count)| (name.clone(), *count))
         .collect();
     unknown_blocks.sort_by(|a, b| b.1.cmp(&a.1));
+
+    if is_json() {
+        emit_if_json(&AnalyzeResult {
+            ty: "result",
+            regions_scanned,
+            chunks_scanned,
+            unique_blocks: blocks_found.len(),
+            unknown_blocks: unknown_blocks
+                .iter()
+                .map(|(name, count)| UnknownBlock { name, count: *count })
+                .collect(),
+        });
+        return Ok(());
+    }
 
     if unknown_blocks.is_empty() {
         info!("All blocks found in regions are present in the palette.");

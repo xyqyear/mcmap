@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use zip::ZipArchive;
 
 use super::raw::{RawBlockstate, RawModel, parse_blockstate_lenient};
+use crate::commands::gen_palette::shared::progress::PackLoadReport;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -248,18 +249,45 @@ fn load_archive(path: &Path, pools: &mut Pools) -> Result<()> {
     load_archive_from_reader(&label, file, pools)
 }
 
-pub fn load_packs(paths: &[PathBuf]) -> Result<Pools> {
+pub fn load_packs<F: FnMut(&PackLoadReport)>(
+    paths: &[PathBuf],
+    mut on_pack: F,
+) -> Result<Pools> {
     let archives = expand_packs(paths)?;
     if archives.is_empty() {
         return Err("No pack files to load (did you pass empty directories?)".into());
     }
 
     let mut pools = Pools::default();
-    for archive_path in &archives {
+    let total = archives.len();
+    for (i, archive_path) in archives.iter().enumerate() {
         info!("Loading pack: {}", archive_path.display());
-        if let Err(e) = load_archive(archive_path, &mut pools) {
-            error!("Failed to load {}: {}", archive_path.display(), e);
-        }
+        let before = (
+            pools.blockstates.len(),
+            pools.models.len(),
+            pools.textures.len(),
+        );
+        let err = match load_archive(archive_path, &mut pools) {
+            Ok(()) => None,
+            Err(e) => {
+                error!("Failed to load {}: {}", archive_path.display(), e);
+                Some(e.to_string())
+            }
+        };
+        let after = (
+            pools.blockstates.len(),
+            pools.models.len(),
+            pools.textures.len(),
+        );
+        on_pack(&PackLoadReport {
+            path: archive_path.clone(),
+            index: i + 1,
+            total,
+            blockstates_added: after.0 - before.0,
+            models_added: after.1 - before.1,
+            textures_added: after.2 - before.2,
+            error: err,
+        });
     }
 
     info!(

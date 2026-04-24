@@ -21,15 +21,18 @@ mod leveldat;
 
 use clap::Args;
 use log::{debug, info};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use super::legacy_pack::{MatchKind, ResolveStats, TexturePack, load_texture_packs, resolve_modded};
 use super::shared::color::avg_colour;
 use super::shared::overrides::{apply_overrides, load_overrides};
+use super::shared::progress::PackLoadReport;
 use super::shared::vanilla_1x;
 use crate::anvil::legacy::palette::LegacyPaletteFile;
 use crate::anvil::palette::Rgba;
+use crate::output::emit_if_json;
 use leveldat::{FmlRegistry, load_fml_registry};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -59,6 +62,87 @@ pub struct LegacyArgs {
 
 const FALLBACK_GRAY: Rgba = [128, 128, 128, 255];
 
+#[derive(Serialize)]
+struct RegistryLoadedEvent<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    phase: &'a str,
+    blocks: usize,
+    items: usize,
+}
+
+#[derive(Serialize)]
+struct PackLoadedEvent<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    phase: &'a str,
+    path: String,
+    index: usize,
+    total: usize,
+    blockstates_added: usize,
+    models_added: usize,
+    textures_added: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+struct PacksDoneEvent<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    phase: &'a str,
+    pack_count: usize,
+    textures: usize,
+}
+
+#[derive(Serialize, Clone, Copy)]
+struct LegacyCounters {
+    vanilla: usize,
+    modded_exact: usize,
+    modded_fuzzy: usize,
+    fallback: usize,
+    missing: usize,
+    malformed: usize,
+}
+
+impl From<&ResolveStats> for LegacyCounters {
+    fn from(s: &ResolveStats) -> Self {
+        Self {
+            vanilla: s.vanilla,
+            modded_exact: s.modded_exact,
+            modded_fuzzy: s.modded_fuzzy,
+            fallback: s.fallback,
+            missing: s.missing,
+            malformed: s.malformed,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct ResolvedEvent<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    phase: &'a str,
+    counters: LegacyCounters,
+}
+
+#[derive(Serialize)]
+struct OverridesAppliedEvent<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    phase: &'a str,
+    count: usize,
+}
+
+#[derive(Serialize)]
+struct ResultEvent<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    output: String,
+    entries: usize,
+    counters: LegacyCounters,
+}
+
 pub fn execute(args: LegacyArgs) -> Result<()> {
     info!("Starting legacy palette generation (1.7.10)");
     info!("Level.dat: {}", args.level_dat.display());
@@ -77,14 +161,38 @@ pub fn execute(args: LegacyArgs) -> Result<()> {
         registry.blocks.len(),
         registry.items.len()
     );
+    emit_if_json(&RegistryLoadedEvent {
+        ty: "progress",
+        phase: "registry_loaded",
+        blocks: registry.blocks.len(),
+        items: registry.items.len(),
+    });
 
-    let packs = load_texture_packs(&args.pack)?;
+    let packs = load_texture_packs(&args.pack, |report: &PackLoadReport| {
+        emit_if_json(&PackLoadedEvent {
+            ty: "progress",
+            phase: "pack_loaded",
+            path: report.path.display().to_string(),
+            index: report.index,
+            total: report.total,
+            blockstates_added: report.blockstates_added,
+            models_added: report.models_added,
+            textures_added: report.textures_added,
+            error: report.error.as_deref(),
+        });
+    })?;
     let total_textures: usize = packs.iter().map(|p| p.textures.len()).sum();
     info!(
         "Loaded {} texture pack(s), {} total textures",
         packs.len(),
         total_textures
     );
+    emit_if_json(&PacksDoneEvent {
+        ty: "progress",
+        phase: "packs_done",
+        pack_count: packs.len(),
+        textures: total_textures,
+    });
 
     let mut palette: HashMap<String, Rgba> = HashMap::new();
     let mut stats = ResolveStats::default();
@@ -113,10 +221,22 @@ pub fn execute(args: LegacyArgs) -> Result<()> {
 
     vanilla_1x::apply_vanilla_postprocess(&mut palette, &id_to_name);
 
+    let counters = LegacyCounters::from(&stats);
+    emit_if_json(&ResolvedEvent {
+        ty: "progress",
+        phase: "resolved",
+        counters,
+    });
+
     if let Some(ref path) = args.overrides {
         let overrides = load_overrides(path)?;
         let n = apply_overrides(&mut palette, overrides);
         info!("Applied {} override entries", n);
+        emit_if_json(&OverridesAppliedEvent {
+            ty: "progress",
+            phase: "overrides_applied",
+            count: n,
+        });
     }
 
     info!(
@@ -140,6 +260,12 @@ pub fn execute(args: LegacyArgs) -> Result<()> {
         file.blocks.len(),
         args.output.display()
     );
+    emit_if_json(&ResultEvent {
+        ty: "result",
+        output: args.output.display().to_string(),
+        entries: file.blocks.len(),
+        counters,
+    });
 
     Ok(())
 }

@@ -4,17 +4,22 @@
 
 use clap::Args;
 use log::{info, warn};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 use std::fmt::Write as _;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use crate::output::emit_if_json;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 const VERSION_MANIFEST_URL: &str =
     "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
+
+const PROGRESS_THROTTLE: Duration = Duration::from_millis(500);
 
 #[derive(Args, Debug)]
 pub struct DownloadClientArgs {
@@ -61,6 +66,58 @@ struct DownloadInfo {
     url: String,
 }
 
+#[derive(Serialize)]
+struct PhaseOnly<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    phase: &'a str,
+}
+
+#[derive(Serialize)]
+struct VersionResolved<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    phase: &'a str,
+    id: &'a str,
+}
+
+#[derive(Serialize)]
+struct DownloadInfoEvent<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    phase: &'a str,
+    size: u64,
+    sha1: &'a str,
+}
+
+#[derive(Serialize)]
+struct CachePhase<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    phase: &'a str,
+    path: String,
+}
+
+#[derive(Serialize)]
+struct DownloadingProgress<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    phase: &'a str,
+    bytes: u64,
+    total: u64,
+}
+
+#[derive(Serialize)]
+struct DownloadResult<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    version: &'a str,
+    target: String,
+    bytes: u64,
+    sha1: &'a str,
+    move_method: &'a str,
+}
+
 pub fn execute(args: DownloadClientArgs) -> Result<()> {
     let http = reqwest::blocking::Client::builder()
         .user_agent(concat!("mcmap/", env!("CARGO_PKG_VERSION")))
@@ -72,6 +129,10 @@ pub fn execute(args: DownloadClientArgs) -> Result<()> {
         .send()?
         .error_for_status()?
         .json()?;
+    emit_if_json(&PhaseOnly {
+        ty: "progress",
+        phase: "manifest_fetched",
+    });
 
     let requested_id = match args.version.as_str() {
         "latest" => {
@@ -93,6 +154,11 @@ pub fn execute(args: DownloadClientArgs) -> Result<()> {
         .iter()
         .find(|v| v.id == requested_id)
         .ok_or_else(|| format!("Version '{}' not found in manifest", requested_id))?;
+    emit_if_json(&VersionResolved {
+        ty: "progress",
+        phase: "version_resolved",
+        id: &entry.id,
+    });
 
     info!("Fetching per-version metadata for {}", entry.id);
     let version_json: VersionJson = http
@@ -106,6 +172,12 @@ pub fn execute(args: DownloadClientArgs) -> Result<()> {
         "Client jar: {} bytes, sha1 {}",
         meta.size, meta.sha1
     );
+    emit_if_json(&DownloadInfoEvent {
+        ty: "progress",
+        phase: "download_info",
+        size: meta.size,
+        sha1: &meta.sha1,
+    });
 
     let tmp_path = std::env::temp_dir().join(format!("mcmap-client-{}.jar.part", entry.id));
 
@@ -115,28 +187,55 @@ pub fn execute(args: DownloadClientArgs) -> Result<()> {
                 "Reusing cached tmp file at {} (sha1 matches)",
                 tmp_path.display()
             );
+            emit_if_json(&CachePhase {
+                ty: "progress",
+                phase: "cache_hit",
+                path: tmp_path.display().to_string(),
+            });
         }
         Some(_) => {
             info!(
                 "Cached tmp file at {} has wrong sha1; re-downloading",
                 tmp_path.display()
             );
+            emit_if_json(&CachePhase {
+                ty: "progress",
+                phase: "cache_miss",
+                path: tmp_path.display().to_string(),
+            });
             fetch_to_tmp(&http, meta, &tmp_path)?;
         }
         None => {
             info!("Downloading to {}", tmp_path.display());
+            emit_if_json(&CachePhase {
+                ty: "progress",
+                phase: "cache_miss",
+                path: tmp_path.display().to_string(),
+            });
             fetch_to_tmp(&http, meta, &tmp_path)?;
         }
     }
 
+    emit_if_json(&PhaseOnly {
+        ty: "progress",
+        phase: "verified",
+    });
     info!("Verification passed. Moving to {}", args.target.display());
-    move_or_copy(&tmp_path, &args.target)?;
+    let move_method = move_or_copy(&tmp_path, &args.target)?;
 
     info!(
         "Saved client.jar for {} to {}",
         entry.id,
         args.target.display()
     );
+    emit_if_json(&DownloadResult {
+        ty: "result",
+        version: &entry.id,
+        target: args.target.display().to_string(),
+        bytes: meta.size,
+        sha1: &meta.sha1,
+        move_method,
+    });
     Ok(())
 }
 
@@ -162,6 +261,7 @@ fn download_and_verify(
     let mut hasher = Sha1::new();
     let mut buf = vec![0u8; 64 * 1024];
     let mut total: u64 = 0;
+    let mut last_emit = Instant::now();
     loop {
         let n = response.read(&mut buf)?;
         if n == 0 {
@@ -170,8 +270,26 @@ fn download_and_verify(
         hasher.update(&buf[..n]);
         file.write_all(&buf[..n])?;
         total += n as u64;
+
+        if last_emit.elapsed() >= PROGRESS_THROTTLE {
+            emit_if_json(&DownloadingProgress {
+                ty: "progress",
+                phase: "downloading",
+                bytes: total,
+                total: meta.size,
+            });
+            last_emit = Instant::now();
+        }
     }
     file.sync_all()?;
+
+    // Final progress tick so consumers see 100% — independent of throttle.
+    emit_if_json(&DownloadingProgress {
+        ty: "progress",
+        phase: "downloading",
+        bytes: total,
+        total: meta.size,
+    });
 
     if total != meta.size {
         return Err(format!(
@@ -218,9 +336,9 @@ fn hex_digest(bytes: &[u8]) -> String {
     s
 }
 
-fn move_or_copy(src: &Path, dst: &Path) -> Result<()> {
+fn move_or_copy(src: &Path, dst: &Path) -> Result<&'static str> {
     match std::fs::rename(src, dst) {
-        Ok(()) => Ok(()),
+        Ok(()) => Ok("rename"),
         Err(e) => {
             warn!(
                 "Atomic rename failed ({}); falling back to copy + remove",
@@ -228,7 +346,7 @@ fn move_or_copy(src: &Path, dst: &Path) -> Result<()> {
             );
             std::fs::copy(src, dst)?;
             std::fs::remove_file(src)?;
-            Ok(())
+            Ok("copy_fallback")
         }
     }
 }

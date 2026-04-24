@@ -11,6 +11,7 @@ use fastanvil::{
     tex::{Blockstate, Renderer},
 };
 use log::{info, warn};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -19,6 +20,8 @@ use super::modern_pack::{
     load_packs,
 };
 use super::shared::overrides::{apply_overrides, load_overrides};
+use super::shared::progress::PackLoadReport;
+use crate::output::emit_if_json;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -40,6 +43,86 @@ pub struct ModernArgs {
     overrides: Option<PathBuf>,
 }
 
+#[derive(Serialize)]
+struct PackLoadedEvent<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    phase: &'a str,
+    path: String,
+    index: usize,
+    total: usize,
+    blockstates_added: usize,
+    models_added: usize,
+    textures_added: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+struct PacksDoneEvent<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    phase: &'a str,
+    pack_count: usize,
+    blockstates: usize,
+    models: usize,
+    textures: usize,
+}
+
+#[derive(Serialize)]
+struct ResolvedEvent<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    phase: &'a str,
+    counters: ResolverCounters,
+    failed: usize,
+}
+
+#[derive(Serialize)]
+struct OverridesAppliedEvent<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    phase: &'a str,
+    count: usize,
+}
+
+#[derive(Serialize)]
+struct ResultEvent<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    output: String,
+    entries: usize,
+    failed: usize,
+    counters: ResolverCounters,
+}
+
+#[derive(Serialize, Clone, Copy)]
+struct ResolverCounters {
+    rendered: usize,
+    side_fallback: usize,
+    particle: usize,
+    any_texture: usize,
+    regex_mapped: usize,
+    probed: usize,
+    substring: usize,
+    generic_blockstate: usize,
+}
+
+impl From<&Counters> for ResolverCounters {
+    fn from(c: &Counters) -> Self {
+        Self {
+            rendered: c.rendered,
+            side_fallback: c.side_fallback,
+            particle: c.particle,
+            any_texture: c.any_texture,
+            regex_mapped: c.mapped,
+            probed: c.probed,
+            substring: c.substring,
+            generic_blockstate: c.generic_blockstate,
+        }
+    }
+}
+
 pub fn execute(args: ModernArgs) -> Result<()> {
     info!("Starting palette generation (modern / 1.13+)");
     info!("Packs ({}):", args.pack.len());
@@ -51,7 +134,27 @@ pub fn execute(args: ModernArgs) -> Result<()> {
     }
     info!("Output: {}", args.output.display());
 
-    let pools = load_packs(&args.pack)?;
+    let pools = load_packs(&args.pack, |report: &PackLoadReport| {
+        emit_if_json(&PackLoadedEvent {
+            ty: "progress",
+            phase: "pack_loaded",
+            path: report.path.display().to_string(),
+            index: report.index,
+            total: report.total,
+            blockstates_added: report.blockstates_added,
+            models_added: report.models_added,
+            textures_added: report.textures_added,
+            error: report.error.as_deref(),
+        });
+    })?;
+    emit_if_json(&PacksDoneEvent {
+        ty: "progress",
+        phase: "packs_done",
+        pack_count: args.pack.len(),
+        blockstates: pools.blockstates.len(),
+        models: pools.models.len(),
+        textures: pools.textures.len(),
+    });
     let Pools {
         blockstates,
         models,
@@ -120,6 +223,13 @@ pub fn execute(args: ModernArgs) -> Result<()> {
         counters.generic_blockstate,
         failed
     );
+    let resolver_counters = ResolverCounters::from(&counters);
+    emit_if_json(&ResolvedEvent {
+        ty: "progress",
+        phase: "resolved",
+        counters: resolver_counters,
+        failed,
+    });
 
     // 1.17 renamed grass_path to dirt_path. Keep the old name working.
     if let Some(path) = palette.get("minecraft:dirt_path").cloned() {
@@ -134,6 +244,11 @@ pub fn execute(args: ModernArgs) -> Result<()> {
         let overrides = load_overrides(path)?;
         let n = apply_overrides(&mut palette, overrides);
         info!("  Applied {} override entries", n);
+        emit_if_json(&OverridesAppliedEvent {
+            ty: "progress",
+            phase: "overrides_applied",
+            count: n,
+        });
     }
 
     info!("Writing palette to: {}", args.output.display());
@@ -144,5 +259,12 @@ pub fn execute(args: ModernArgs) -> Result<()> {
         "Palette generation complete — {} total blocks written",
         palette.len()
     );
+    emit_if_json(&ResultEvent {
+        ty: "result",
+        output: args.output.display().to_string(),
+        entries: palette.len(),
+        failed,
+        counters: resolver_counters,
+    });
     Ok(())
 }
