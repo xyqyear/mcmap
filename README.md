@@ -195,6 +195,54 @@ mcmap render -r /path/to/world/region -p nova-palette.json -o map.png
 
 Same fallback-gray caveat as `gen-palette legacy` — use `--overrides` to pin specific blocks.
 
+### `replace-chunks` - Copy chunks from one region into another
+
+Byte-level chunk replacement between two `r.X.Z.mca` files. Compressed payloads are passed through verbatim — NBT is never decoded — so DataVersion, mod-specific tags, and modded block data are preserved exactly. The 1.17+ `.mcc` external-chunk overflow mechanism is fully supported: external slots are detected via the scheme byte's high bit, the companion `c.<absX>.<absZ>.mcc` is read from the source's directory and written next to the target.
+
+Useful as a building block for partial chunk rollback, structure transplant, or world splicing. One invocation handles one `.mca` pair; for a 1.17+ world, run it three times — once each for `region/`, `entities/`, and `poi/`.
+
+```bash
+# Roll back a single chunk from a backup
+mcmap replace-chunks \
+    -s backup/region/r.7.-1.mca \
+    -t world/region/r.7.-1.mca \
+    -c 4,15
+
+# Multiple chunks in one go (semicolon-separated, region-relative coords in [0, 31])
+mcmap replace-chunks \
+    -s backup/region/r.7.-1.mca \
+    -t world/region/r.7.-1.mca \
+    -c "4,15;4,14;13,22"
+
+# Source and target with different region coords also works — the slot index is
+# region-relative, so (0,0) of source goes to (0,0) of target regardless of rx/rz.
+mcmap replace-chunks -s template/r.0.0.mca -t world/region/r.7.-1.mca -c 0,0
+```
+
+For a full chunk rollback on a 1.17+ world, mirror the call across the file split:
+
+```bash
+for sub in region entities poi; do
+    mcmap replace-chunks \
+        -s "backup/$sub/r.7.-1.mca" \
+        -t "world/$sub/r.7.-1.mca"  \
+        -c "4,15;4,14"
+done
+```
+
+Atomicity ordering on the target side: new `.mcc` files are written via `<file>.tmp` + rename, then the target `.mca` is atomic-renamed, then stale `.mcc` files are deleted. At no point does the on-disk state contain a stub record without its `.mcc`. See [`docs/replace_chunks.md`](./docs/replace_chunks.md) for the format spec, behavior matrix, and atomicity argument.
+
+### `remove-chunks` - Empty chunks from a region
+
+Empties the named slots in a target `.mca`. If a slot was external, its companion `c.<absX>.<absZ>.mcc` file is also deleted. Slots not listed are preserved verbatim, including their `.mcc` files. Same byte-level model as `replace-chunks` — no NBT decoding.
+
+```bash
+# Remove three chunks
+mcmap remove-chunks -t world/region/r.7.-1.mca -c "4,15;4,14;13,22"
+```
+
+For a full per-chunk wipe on a 1.17+ world, mirror across the file split the same way as `replace-chunks`.
+
 ## Performance
 
 Performance benchmarks on a 512×512 region:

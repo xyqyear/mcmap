@@ -268,6 +268,65 @@ curated table for vanilla, so it reports **both** sets, nested:
 {"type":"result","output":"./palette.json","entries":1213,"failed":3,"counters":{"rendered":1020,"side_fallback":110,"particle":18,"any_texture":34,"regex_mapped":21,"probed":5,"substring":2,"generic_blockstate":0}}
 ```
 
+## `replace-chunks`
+
+Copies named region-relative chunk slots from a source `.mca` into a target
+`.mca` at the byte level, preserving the 1.17+ `.mcc` external-chunk overflow
+mechanism.
+
+### Event types
+
+No `progress` events — the operation is synchronous and short.
+
+Per-chunk events (one per coord in `--chunks`, in input order):
+
+| `type`            | Extra fields                                                                                                                  |
+|-------------------|-------------------------------------------------------------------------------------------------------------------------------|
+| `chunk_replaced`  | `x` (u8), `z` (u8) — the region-relative slot. `source_kind` (string) — `"empty"`, `"inline"`, or `"external"` for the source's prior state. |
+
+`result` event:
+
+| Field      | Description                                                |
+|------------|------------------------------------------------------------|
+| `replaced` | Number of chunks replaced (matches the `--chunks` length). |
+
+### Example
+
+```json
+{"type":"chunk_replaced","x":4,"z":15,"source_kind":"external"}
+{"type":"chunk_replaced","x":4,"z":14,"source_kind":"external"}
+{"type":"result","replaced":2}
+```
+
+## `remove-chunks`
+
+Empties named region-relative chunk slots in a target `.mca`, deleting their
+companion `.mcc` files when the slot was external.
+
+### Event types
+
+No `progress` events.
+
+Per-chunk events (one per coord in `--chunks`, in input order):
+
+| `type`          | Extra fields                                              |
+|-----------------|-----------------------------------------------------------|
+| `chunk_removed` | `x` (u8), `z` (u8) — the region-relative slot.            |
+
+`result` event:
+
+| Field     | Description                                              |
+|-----------|----------------------------------------------------------|
+| `removed` | Number of chunks emptied (matches the `--chunks` length). |
+
+### Example
+
+```json
+{"type":"chunk_removed","x":4,"z":15}
+{"type":"chunk_removed","x":4,"z":14}
+{"type":"result","removed":2}
+```
+
 ## Error event
 
 Any failure after argument parsing terminates the stream with:

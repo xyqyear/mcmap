@@ -33,6 +33,14 @@ enum Commands {
 
     /// Download the Minecraft client jar for a given version from Mojang.
     DownloadClient(commands::download_client::DownloadClientArgs),
+
+    /// Copy specified chunks from a source .mca into a target .mca at the
+    /// byte level, preserving the .mcc external-chunk overflow mechanism.
+    ReplaceChunks(commands::replace_chunks::ReplaceChunksArgs),
+
+    /// Remove specified chunks from a target .mca, deleting their .mcc
+    /// companions when the slot was external.
+    RemoveChunks(commands::remove_chunks::RemoveChunksArgs),
 }
 
 #[derive(Serialize)]
@@ -59,6 +67,8 @@ fn main() {
         Commands::Analyze(args) => commands::analyze::execute(args),
         Commands::GenPalette(args) => commands::gen_palette::execute(args),
         Commands::DownloadClient(args) => commands::download_client::execute(args),
+        Commands::ReplaceChunks(args) => commands::replace_chunks::execute(args),
+        Commands::RemoveChunks(args) => commands::remove_chunks::execute(args),
     };
 
     if let Err(e) = result {
