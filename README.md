@@ -42,6 +42,34 @@ mcmap --json render -r /world/region -p palette.json -o map.png
 See [`JSON_OUTPUT.md`](./JSON_OUTPUT.md) for the full schema — event
 shapes, phase identifiers, counter fields, and exit-code behavior.
 
+## Output ownership (`--chown`)
+
+Global `--chown <UID[:GID]>` flag (Unix only, requires effective uid 0)
+chowns every file or directory the run creates or atomically replaces:
+the `--split` output dir and rendered PNGs, palette JSON outputs,
+downloaded client jars, and the `.mca` / `.mcc` files written by
+`replace-chunks` / `remove-chunks`. Useful when running mcmap as root
+inside a service or container so the resulting artifacts are owned by
+the unprivileged caller.
+
+Accepted forms mirror `chown(1)` — numeric only, no name lookup:
+
+```bash
+# Set both owner and group
+sudo mcmap --chown 1000:1000 render -r /world/region -p palette.json -o ./tiles --split
+
+# Owner only
+sudo mcmap --chown 1000 gen-palette modern -p 1.20.1.jar -o palette.json
+
+# Group only
+sudo mcmap --chown :1000 download-client 1.20.1 ./client.jar
+```
+
+A failed chown aborts the command (the requested ownership is not best
+effort). The flag is rejected at startup on non-Unix and when not run
+as root. The download-client `.jar.part` cache in the system temp dir
+is intentionally left alone so it stays reusable across runs.
+
 ## Examples
 
 ### Block-colored Render
