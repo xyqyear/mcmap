@@ -18,6 +18,7 @@ use crate::anvil::{
     AnyPalette, CCoord, HeightMode, RCoord, RegionFileLoader, RegionMap, TopShadeRenderer,
     palette, region::RegionLoader, render_region,
 };
+use crate::chown;
 use crate::output::emit_if_json;
 
 const REGION_PX: u32 = 32 * 16; // 512 px per region side
@@ -268,6 +269,9 @@ pub fn execute(args: RenderArgs) -> Result<()> {
         std::fs::create_dir_all(&out_dir).map_err(|e| {
             format!("Failed to create output directory {}: {}", out_dir.display(), e)
         })?;
+        chown::apply(&out_dir).map_err(|e| {
+            format!("Failed to chown output directory {}: {}", out_dir.display(), e)
+        })?;
 
         emit_if_json(&PhaseEvent {
             ty: "progress",
@@ -288,7 +292,14 @@ pub fn execute(args: RenderArgs) -> Result<()> {
                     Ok(Some(map)) => {
                         let img = region_to_image(&map);
                         let path = out_dir.join(format!("r.{}.{}.png", x.0, z.0));
-                        match img.save(&path) {
+                        let save_then_chown = img
+                            .save(&path)
+                            .map_err(|e| format!("save failed: {}", e))
+                            .and_then(|()| {
+                                chown::apply(&path)
+                                    .map_err(|e| format!("chown failed: {}", e))
+                            });
+                        match save_then_chown {
                             Ok(()) => {
                                 let mut warnings: Vec<String> = Vec::new();
                                 if args.preserve_mtime {
@@ -322,7 +333,7 @@ pub fn execute(args: RenderArgs) -> Result<()> {
                                     z: z.0 as i64,
                                     status: "error",
                                     output: None,
-                                    error: Some(e.to_string()),
+                                    error: Some(e),
                                     warnings: Vec::new(),
                                 });
                                 0
@@ -490,6 +501,8 @@ pub fn execute(args: RenderArgs) -> Result<()> {
 
     info!("Saving image to: {}", args.output.display());
     img.save(&args.output)?;
+    chown::apply(&args.output)
+        .map_err(|e| format!("Failed to chown {}: {}", args.output.display(), e))?;
     info!("Done! Map saved successfully.");
     info!("⏱ Total time: {:?}", total_start.elapsed());
 

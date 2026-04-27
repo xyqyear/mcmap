@@ -12,6 +12,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use crate::chown;
 use crate::output::emit_if_json;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -222,6 +223,8 @@ pub fn execute(args: DownloadClientArgs) -> Result<()> {
     });
     info!("Verification passed. Moving to {}", args.target.display());
     let move_method = move_or_copy(&tmp_path, &args.target)?;
+    chown::apply(&args.target)
+        .map_err(|e| format!("Failed to chown {}: {}", args.target.display(), e))?;
 
     info!(
         "Saved client.jar for {} to {}",

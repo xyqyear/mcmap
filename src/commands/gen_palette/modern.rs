@@ -21,6 +21,7 @@ use super::modern_pack::{
 };
 use super::shared::overrides::{apply_overrides, load_overrides};
 use super::shared::progress::PackLoadReport;
+use crate::chown;
 use crate::output::emit_if_json;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -254,6 +255,8 @@ pub fn execute(args: ModernArgs) -> Result<()> {
     info!("Writing palette to: {}", args.output.display());
     let file = std::fs::File::create(&args.output)?;
     serde_json::to_writer_pretty(file, &palette)?;
+    chown::apply(&args.output)
+        .map_err(|e| format!("Failed to chown {}: {}", args.output.display(), e))?;
 
     info!(
         "Palette generation complete — {} total blocks written",

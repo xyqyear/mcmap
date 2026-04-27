@@ -1,4 +1,5 @@
 mod anvil;
+mod chown;
 mod commands;
 mod output;
 
@@ -14,6 +15,11 @@ struct Cli {
     /// stream of progress events and a final `result` (or `error`).
     #[arg(long, global = true, default_value_t = false)]
     json: bool,
+
+    /// Chown every file/dir created or atomically replaced by this run to the
+    /// given numeric `UID`, `UID:GID`, or `:GID`. Unix only; requires euid 0.
+    #[arg(long, global = true, value_name = "UID[:GID]", value_parser = chown::parse_spec)]
+    chown: Option<chown::ChownSpec>,
 
     #[command(subcommand)]
     command: Commands,
@@ -61,6 +67,28 @@ fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or(default_filter))
         .format_timestamp(None)
         .init();
+
+    if let Some(spec) = cli.chown {
+        if !cfg!(unix) {
+            let msg = "--chown is only supported on Unix platforms".to_string();
+            if cli.json {
+                output::emit(&ErrorEvent { ty: "error", message: msg });
+            } else {
+                eprintln!("Error: {}", msg);
+            }
+            std::process::exit(2);
+        }
+        if !chown::is_root() {
+            let msg = "--chown requires root (effective uid 0)".to_string();
+            if cli.json {
+                output::emit(&ErrorEvent { ty: "error", message: msg });
+            } else {
+                eprintln!("Error: {}", msg);
+            }
+            std::process::exit(2);
+        }
+        chown::set(spec);
+    }
 
     let result = match cli.command {
         Commands::Render(args) => commands::render::execute(args),

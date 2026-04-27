@@ -11,6 +11,7 @@ use std::io::Write;
 use std::path::Path;
 
 use super::util::parse_region_filename;
+use crate::chown;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -268,6 +269,7 @@ fn write_atomic(tmp: &Path, dst: &Path, bytes: &[u8]) -> Result<()> {
         f.sync_all()?;
     }
     std::fs::rename(tmp, dst)?;
+    chown::apply(dst)?;
     Ok(())
 }
 

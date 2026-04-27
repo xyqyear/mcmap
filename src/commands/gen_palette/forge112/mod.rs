@@ -37,6 +37,7 @@ use super::shared::progress::PackLoadReport;
 use super::shared::vanilla_1x;
 use crate::anvil::legacy::palette::LegacyPaletteFile;
 use crate::anvil::palette::Rgba;
+use crate::chown;
 use crate::output::emit_if_json;
 use leveldat::load_fml_registry;
 
@@ -362,6 +363,8 @@ pub fn execute(args: Forge112Args) -> Result<()> {
     };
     let bytes = serde_json::to_vec_pretty(&file)?;
     std::fs::write(&args.output, &bytes)?;
+    chown::apply(&args.output)
+        .map_err(|e| format!("Failed to chown {}: {}", args.output.display(), e))?;
     info!(
         "Forge 1.12.2 palette generation complete — {} entries written to {}",
         file.blocks.len(),
