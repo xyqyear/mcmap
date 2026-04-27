@@ -16,9 +16,10 @@ struct Cli {
     #[arg(long, global = true, default_value_t = false)]
     json: bool,
 
-    /// Chown every file/dir created or atomically replaced by this run to the
-    /// given numeric `UID`, `UID:GID`, or `:GID`. Unix only; requires euid 0.
-    #[arg(long, global = true, value_name = "UID[:GID]", value_parser = chown::parse_spec)]
+    /// Chown every file/dir created or atomically replaced by this run.
+    /// Accepts `OWNER`, `OWNER:GROUP`, or `:GROUP`; each part may be a name
+    /// (resolved via NSS) or a numeric id. Unix only; requires euid 0.
+    #[arg(long, global = true, value_name = "OWNER[:GROUP]", value_parser = chown::parse_spec)]
     chown: Option<chown::ChownSpec>,
 
     #[command(subcommand)]

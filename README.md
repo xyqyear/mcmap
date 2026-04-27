@@ -44,25 +44,26 @@ shapes, phase identifiers, counter fields, and exit-code behavior.
 
 ## Output ownership (`--chown`)
 
-Global `--chown <UID[:GID]>` flag (Unix only, requires effective uid 0)
-chowns every file or directory the run creates or atomically replaces:
-the `--split` output dir and rendered PNGs, palette JSON outputs,
-downloaded client jars, and the `.mca` / `.mcc` files written by
-`replace-chunks` / `remove-chunks`. Useful when running mcmap as root
-inside a service or container so the resulting artifacts are owned by
-the unprivileged caller.
+Global `--chown <OWNER[:GROUP]>` flag (Unix only, requires effective uid
+0) chowns every file or directory the run creates or atomically
+replaces: the `--split` output dir and rendered PNGs, palette JSON
+outputs, downloaded client jars, and the `.mca` / `.mcc` files written
+by `replace-chunks` / `remove-chunks`. Useful when running mcmap as
+root inside a service or container so the resulting artifacts are
+owned by the unprivileged caller.
 
-Accepted forms mirror `chown(1)` — numeric only, no name lookup:
+Accepted forms mirror `chown(1)`. Each part may be a numeric id or a
+name resolved through NSS (`getpwnam_r` / `getgrnam_r`):
 
 ```bash
-# Set both owner and group
-sudo mcmap --chown 1000:1000 render -r /world/region -p palette.json -o ./tiles --split
+# Owner and group by name
+sudo mcmap --chown alice:users render -r /world/region -p palette.json -o ./tiles --split
 
-# Owner only
-sudo mcmap --chown 1000 gen-palette modern -p 1.20.1.jar -o palette.json
+# Numeric ids
+sudo mcmap --chown 1000:1000 gen-palette modern -p 1.20.1.jar -o palette.json
 
-# Group only
-sudo mcmap --chown :1000 download-client 1.20.1 ./client.jar
+# Group only (name or id)
+sudo mcmap --chown :minecraft download-client 1.20.1 ./client.jar
 ```
 
 A failed chown aborts the command (the requested ownership is not best

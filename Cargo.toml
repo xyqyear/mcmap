@@ -21,6 +21,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+uzers = "0.12"
 
 [profile.release]
 # Whole-program optimizations. Slower to compile but noticeably faster
