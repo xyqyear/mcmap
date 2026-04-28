@@ -180,15 +180,7 @@ pub fn read_slot(
 }
 
 pub fn validate_region_bytes(bytes: &[u8], side: &str) -> Result<()> {
-    if bytes.len() % SECTOR_BYTES != 0 {
-        return Err(format!(
-            "{}: file size {} is not a multiple of {}",
-            side,
-            bytes.len(),
-            SECTOR_BYTES
-        )
-        .into());
-    }
+    // Vanilla pads to a sector multiple only on close, so a file backed up mid-write is unaligned but readable; read_slot does per-record bounds checks.
     if bytes.len() < HEADER_SECTORS * SECTOR_BYTES {
         return Err(format!(
             "{}: file is shorter than the {} byte region header",
