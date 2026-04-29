@@ -271,7 +271,7 @@ curated table for vanilla, so it reports **both** sets, nested:
 ## `replace-chunks`
 
 Copies named region-relative chunk slots from a source `.mca` into a target
-`.mca` at the byte level, preserving the 1.17+ `.mcc` external-chunk overflow
+`.mca` at the byte level, preserving the 1.15+ `.mcc` external-chunk overflow
 mechanism.
 
 ### Event types

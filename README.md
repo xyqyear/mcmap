@@ -226,7 +226,7 @@ Same fallback-gray caveat as `gen-palette legacy` — use `--overrides` to pin s
 
 ### `replace-chunks` - Copy chunks from one region into another
 
-Byte-level chunk replacement between two `r.X.Z.mca` files. Compressed payloads are passed through verbatim — NBT is never decoded — so DataVersion, mod-specific tags, and modded block data are preserved exactly. The 1.17+ `.mcc` external-chunk overflow mechanism is fully supported: external slots are detected via the scheme byte's high bit, the companion `c.<absX>.<absZ>.mcc` is read from the source's directory and written next to the target.
+Byte-level chunk replacement between two `r.X.Z.mca` files. Compressed payloads are passed through verbatim — NBT is never decoded — so DataVersion, mod-specific tags, and modded block data are preserved exactly. The 1.15+ `.mcc` external-chunk overflow mechanism is fully supported: external slots are detected via the scheme byte's high bit, the companion `c.<absX>.<absZ>.mcc` is read from the source's directory and written next to the target.
 
 Useful as a building block for partial chunk rollback, structure transplant, or world splicing. One invocation handles one `.mca` pair; for a 1.17+ world, run it three times — once each for `region/`, `entities/`, and `poi/`.
 
