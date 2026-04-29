@@ -9,7 +9,9 @@ use clap::Args;
 use serde::Serialize;
 use std::path::PathBuf;
 
-use super::region_io::{SlotState, apply_slot_mutations, parse_chunks, slot_index};
+use super::region_io::{
+    HEADER_SECTORS, SECTOR_BYTES, SlotState, apply_slot_mutations, parse_chunks, slot_index,
+};
 use crate::output::{emit, is_json};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -32,6 +34,8 @@ struct ChunkRemoved<'a> {
     ty: &'a str,
     x: u8,
     z: u8,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    was_empty: bool,
 }
 
 #[derive(Serialize)]
@@ -48,12 +52,19 @@ pub fn execute(args: RemoveChunksArgs) -> Result<()> {
         return Err(format!("target file does not exist: {}", args.target.display()).into());
     }
 
-    let mutations: Vec<(usize, SlotState)> = chunks
-        .iter()
-        .map(|&(x, z)| (slot_index(x, z), SlotState::Empty))
-        .collect();
+    // A sub-header target (most often a 0-byte vanilla poi placeholder) already
+    // has no chunks recorded — the requested removals are no-ops. Leave the
+    // file alone rather than promoting it to an 8192-byte all-zero header.
+    let target_was_empty =
+        (std::fs::metadata(&args.target)?.len() as usize) < HEADER_SECTORS * SECTOR_BYTES;
 
-    apply_slot_mutations(&args.target, &mutations)?;
+    if !target_was_empty {
+        let mutations: Vec<(usize, SlotState)> = chunks
+            .iter()
+            .map(|&(x, z)| (slot_index(x, z), SlotState::Empty))
+            .collect();
+        apply_slot_mutations(&args.target, &mutations)?;
+    }
 
     if is_json() {
         for &(x, z) in &chunks {
@@ -61,6 +72,7 @@ pub fn execute(args: RemoveChunksArgs) -> Result<()> {
                 ty: "chunk_removed",
                 x,
                 z,
+                was_empty: target_was_empty,
             });
         }
         emit(&ResultEvent {

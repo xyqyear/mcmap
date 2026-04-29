@@ -1,7 +1,7 @@
 // Byte-level chunk replacement between region files.
 //
 // Copies named region-relative chunk slots from a source `.mca` into a target
-// `.mca` without decoding NBT. Honors the 1.17+ `.mcc` external-chunk overflow
+// `.mca` without decoding NBT. Honors the 1.15+ `.mcc` external-chunk overflow
 // mechanism. Heavy lifting (read/emit/atomic-write/.mcc bookkeeping) lives in
 // `super::region_io`; this file is the CLI surface.
 //
@@ -12,8 +12,8 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 use super::region_io::{
-    SlotState, apply_slot_mutations, parse_chunks, read_slot, region_coords, slot_index,
-    validate_region_bytes,
+    SlotState, apply_slot_mutations, is_placeholder_region, parse_chunks, read_slot,
+    region_coords, slot_index,
 };
 use crate::output::{emit, is_json};
 
@@ -69,7 +69,7 @@ pub fn execute(args: ReplaceChunksArgs) -> Result<()> {
         return Err(format!("source file does not exist: {}", args.source.display()).into());
     }
     let source_bytes = std::fs::read(&args.source)?;
-    validate_region_bytes(&source_bytes, "source")?;
+    let source_is_placeholder = is_placeholder_region(&source_bytes);
     let source_region = region_coords(&args.source);
     let source_dir = args.source.parent().unwrap_or(Path::new(""));
 
@@ -77,7 +77,11 @@ pub fn execute(args: ReplaceChunksArgs) -> Result<()> {
     let mut source_kinds: Vec<&'static str> = Vec::with_capacity(chunks.len());
     for &(x, z) in &chunks {
         let slot = slot_index(x, z);
-        let state = read_slot(&source_bytes, slot, source_dir, source_region, true, "source")?;
+        let state = if source_is_placeholder {
+            SlotState::Empty
+        } else {
+            read_slot(&source_bytes, slot, source_dir, source_region, true, "source")?
+        };
         let kind = match &state {
             SlotState::Empty => "empty",
             SlotState::Inline { .. } => "inline",

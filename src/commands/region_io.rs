@@ -1,6 +1,6 @@
 // Byte-level Anvil region I/O shared by replace-chunks and remove-chunks.
 //
-// Handles the 1.17+ `.mcc` external-chunk overflow mechanism (scheme byte high
+// Handles the 1.15+ `.mcc` external-chunk overflow mechanism (scheme byte high
 // bit + sibling `c.<absX>.<absZ>.mcc` file) without decoding NBT.
 //
 // See `docs/replace_chunks.md` for the format spec and atomicity argument.
@@ -9,6 +9,8 @@ use std::collections::HashSet;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
+
+use log::warn;
 
 use super::util::parse_region_filename;
 use crate::chown;
@@ -107,27 +109,57 @@ pub fn read_slot(
         return Ok(SlotState::Empty);
     }
 
+    // Vanilla's RegionFile constructor (1.16+) clears any slot whose offset
+    // points into the header sectors, into oblivion past EOF, or whose count
+    // is zero. Mirror that by treating those cases as empty rather than
+    // erroring out — a single corrupt slot shouldn't poison the whole
+    // operation. For older vanilla (1.7-1.15) the same outcome happens
+    // lazily on read (returns null). Either way the user-observable answer
+    // is "no chunk here", and matching that lets mcmap operate on
+    // partially-corrupt regions instead of failing closed.
+    let (x, z) = slot_to_xz(slot);
+    if sector_offset < HEADER_SECTORS as u32 {
+        warn!(
+            "{}: chunk at ({}, {}) overlaps with region header (sector_offset={}); treating as empty",
+            side, x, z, sector_offset
+        );
+        return Ok(SlotState::Empty);
+    }
+
     let ts_off = SECTOR_BYTES + slot * 4;
     let timestamp =
         u32::from_be_bytes(bytes[ts_off..ts_off + 4].try_into().unwrap());
 
     let record_off = (sector_offset as usize) * SECTOR_BYTES;
     if record_off + 5 > bytes.len() {
-        return Err(format!(
-            "{}: chunk record at slot {} extends past end of file",
-            side, slot
-        )
-        .into());
+        warn!(
+            "{}: chunk at ({}, {}) header extends past end of file (sector_offset={}, file_len={}); treating as empty",
+            side, x, z, sector_offset, bytes.len()
+        );
+        return Ok(SlotState::Empty);
     }
     let length =
         u32::from_be_bytes(bytes[record_off..record_off + 4].try_into().unwrap());
     let scheme = bytes[record_off + 4];
     if length < 1 {
-        return Err(format!(
-            "{}: chunk record at slot {} has invalid length 0",
-            side, slot
-        )
-        .into());
+        warn!(
+            "{}: chunk at ({}, {}) has invalid length 0; treating as empty",
+            side, x, z
+        );
+        return Ok(SlotState::Empty);
+    }
+    // Vanilla rejects records whose claimed length exceeds the slot's
+    // sector reservation (`length > sector_count * 4096` in RegionFile).
+    // The on-disk record is `4 (length field) + length` bytes, and
+    // `length` includes the scheme byte; vanilla's check uses the looser
+    // `length > 4096*count` bound, which we mirror exactly.
+    let max_length = (sector_count as u32) * (SECTOR_BYTES as u32);
+    if length > max_length {
+        warn!(
+            "{}: chunk at ({}, {}) claims length {} but sector reservation is {} bytes; treating as empty",
+            side, x, z, length, max_length
+        );
+        return Ok(SlotState::Empty);
     }
 
     if scheme & 0x80 != 0 {
@@ -165,11 +197,11 @@ pub fn read_slot(
         let start = record_off + 5;
         let end = start + payload_len;
         if end > bytes.len() {
-            return Err(format!(
-                "{}: chunk payload at slot {} extends past end of file",
-                side, slot
-            )
-            .into());
+            warn!(
+                "{}: chunk at ({}, {}) payload extends past end of file (claimed {} payload bytes, file_len={}); treating as empty",
+                side, x, z, payload_len, bytes.len()
+            );
+            return Ok(SlotState::Empty);
         }
         Ok(SlotState::Inline {
             scheme,
@@ -179,17 +211,15 @@ pub fn read_slot(
     }
 }
 
-pub fn validate_region_bytes(bytes: &[u8], side: &str) -> Result<()> {
-    // Vanilla pads to a sector multiple only on close, so a file backed up mid-write is unaligned but readable; read_slot does per-record bounds checks.
-    if bytes.len() < HEADER_SECTORS * SECTOR_BYTES {
-        return Err(format!(
-            "{}: file is shorter than the {} byte region header",
-            side,
-            HEADER_SECTORS * SECTOR_BYTES
-        )
-        .into());
-    }
-    Ok(())
+/// Vanilla writes a 0-byte `r.X.Z.mca` whenever it has nothing to record for
+/// that region — most commonly under `poi/`, but the same rule covers `region/`
+/// and `entities/`. `RegionFile.<init>` in 1.21.x reads the header, sees
+/// `FileChannel.read(...) == -1`, skips the location-table parse loop, and
+/// returns a region with all 1024 slots unallocated. Treat the same on disk
+/// shape as "no chunks here" instead of an error so `replace-chunks` and
+/// `remove-chunks` keep parity with vanilla on real worlds.
+pub fn is_placeholder_region(bytes: &[u8]) -> bool {
+    bytes.len() < HEADER_SECTORS * SECTOR_BYTES
 }
 
 fn write_location(buf: &mut [u8], slot: usize, sector_offset: u32, sector_count: u8) {
@@ -267,9 +297,12 @@ fn write_atomic(tmp: &Path, dst: &Path, bytes: &[u8]) -> Result<()> {
 
 /// Apply per-slot mutations to a target region file. For each `(slot,
 /// new_state)`, the target's slot is overwritten; slots not listed are
-/// preserved verbatim. A missing target file is treated as a 1024-empty-slot
-/// region (so callers can write a fresh region by listing all the slots they
-/// want present).
+/// preserved verbatim. A missing or sub-header target file is treated as a
+/// 1024-empty-slot region (matching vanilla — see `is_placeholder_region`).
+/// If the target was such a placeholder and no chunk ended up present after
+/// the mutations, the file is left untouched: vanilla's 0-byte poi/entities
+/// placeholders stay 0-byte instead of being promoted to an 8192-byte
+/// all-zero header for no reason.
 ///
 /// External slots in `new_state` must carry their `.mcc` bytes inline (i.e.
 /// `mcc: Some(_)`); the bytes are written next to the target as
@@ -287,23 +320,19 @@ pub fn apply_slot_mutations(
     let target_region = region_coords(target);
     let target_dir = target.parent().unwrap_or(Path::new(""));
 
-    let target_bytes_opt = match std::fs::read(target) {
-        Ok(b) => {
-            validate_region_bytes(&b, "target")?;
-            Some(b)
+    let (mut target_slots, target_was_placeholder) = match std::fs::read(target) {
+        Ok(ref b) if !is_placeholder_region(b) => {
+            let mut v = Vec::with_capacity(SLOT_COUNT);
+            for slot in 0..SLOT_COUNT {
+                v.push(read_slot(b, slot, target_dir, target_region, false, "target")?);
+            }
+            (v, false)
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Ok(_) => (vec![SlotState::Empty; SLOT_COUNT], true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            (vec![SlotState::Empty; SLOT_COUNT], true)
+        }
         Err(e) => return Err(e.into()),
-    };
-
-    let mut target_slots: Vec<SlotState> = if let Some(ref tb) = target_bytes_opt {
-        let mut v = Vec::with_capacity(SLOT_COUNT);
-        for slot in 0..SLOT_COUNT {
-            v.push(read_slot(tb, slot, target_dir, target_region, false, "target")?);
-        }
-        v
-    } else {
-        vec![SlotState::Empty; SLOT_COUNT]
     };
 
     let prior_external: Vec<bool> = mutations
@@ -346,6 +375,18 @@ pub fn apply_slot_mutations(
                 mcc_deletes.push((abs_x, abs_z));
             }
         }
+    }
+
+    if target_was_placeholder
+        && target_slots.iter().all(|s| matches!(s, SlotState::Empty))
+    {
+        // Nothing to materialize. Leaving a 0-byte vanilla placeholder alone
+        // (or never creating a missing target) is the right outcome — see
+        // `is_placeholder_region` for the parity argument with vanilla. The
+        // .mcc bookkeeping above produces no work in this case because a
+        // placeholder target carried no prior external slots.
+        debug_assert!(mcc_writes.is_empty() && mcc_deletes.is_empty());
+        return Ok(());
     }
 
     let out_bytes = emit_region(&target_slots)?;
@@ -426,5 +467,327 @@ mod tests {
         assert!(parse_chunks("4,5,6").is_err());
         assert!(parse_chunks("4,15;").is_err());
         assert!(parse_chunks("a,b").is_err());
+    }
+
+    #[test]
+    fn placeholder_region_threshold() {
+        assert!(is_placeholder_region(b""));
+        assert!(is_placeholder_region(&[0u8; 1]));
+        assert!(is_placeholder_region(
+            &[0u8; HEADER_SECTORS * SECTOR_BYTES - 1]
+        ));
+        assert!(!is_placeholder_region(
+            &[0u8; HEADER_SECTORS * SECTOR_BYTES]
+        ));
+        assert!(!is_placeholder_region(
+            &[0u8; HEADER_SECTORS * SECTOR_BYTES + 4096]
+        ));
+    }
+
+    /// Wraps a unique tempdir under the OS temp root. Cleans itself up on drop
+    /// so tests don't leak state across runs.
+    struct TempDir(std::path::PathBuf);
+    impl TempDir {
+        fn new(label: &str) -> Self {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static N: AtomicU64 = AtomicU64::new(0);
+            let n = N.fetch_add(1, Ordering::Relaxed);
+            let pid = std::process::id();
+            let p = std::env::temp_dir().join(format!("mcmap-test-{label}-{pid}-{n}"));
+            let _ = std::fs::remove_dir_all(&p);
+            std::fs::create_dir_all(&p).unwrap();
+            TempDir(p)
+        }
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Build a minimal valid 8192-byte all-zero region (header only, no
+    /// chunks). Equivalent to what vanilla writes when it pads on close with
+    /// no chunks present, and what the bug report calls a "header-only" MCA.
+    fn empty_header_only() -> Vec<u8> {
+        vec![0u8; HEADER_SECTORS * SECTOR_BYTES]
+    }
+
+    /// Build a region with one inline chunk record at `(x, z)`. Header is
+    /// computed; payload is `payload` (a few bytes of compressed data —
+    /// content is opaque to the byte-copy path).
+    fn region_with_one_chunk(x: u8, z: u8, scheme: u8, payload: &[u8]) -> Vec<u8> {
+        let mut out = empty_header_only();
+        let slot = slot_index(x, z);
+        let sector_offset: u32 = HEADER_SECTORS as u32;
+        let total = 5 + payload.len();
+        let sectors = total.div_ceil(SECTOR_BYTES);
+        let length = (1 + payload.len()) as u32;
+        out.extend_from_slice(&length.to_be_bytes());
+        out.push(scheme);
+        out.extend_from_slice(payload);
+        out.resize(out.len() + sectors * SECTOR_BYTES - total, 0);
+        // Location entry
+        let loc_off = slot * 4;
+        out[loc_off] = ((sector_offset >> 16) & 0xFF) as u8;
+        out[loc_off + 1] = ((sector_offset >> 8) & 0xFF) as u8;
+        out[loc_off + 2] = (sector_offset & 0xFF) as u8;
+        out[loc_off + 3] = sectors as u8;
+        // Timestamp = 1
+        let ts_off = SECTOR_BYTES + slot * 4;
+        out[ts_off..ts_off + 4].copy_from_slice(&1u32.to_be_bytes());
+        out
+    }
+
+    #[test]
+    fn placeholder_target_with_only_empty_mutations_leaves_file_alone() {
+        // Bug repro Case 3: vanilla writes a 0-byte poi/r.X.Z.mca placeholder.
+        // remove-chunks-style mutations (every new state is Empty) should not
+        // promote the placeholder to a fresh 8192-byte all-zero header.
+        let dir = TempDir::new("placeholder-noop");
+        let target = dir.path().join("r.-1.0.mca");
+        std::fs::write(&target, b"").unwrap();
+
+        let mutations = vec![
+            (slot_index(0, 0), SlotState::Empty),
+            (slot_index(5, 7), SlotState::Empty),
+        ];
+        apply_slot_mutations(&target, &mutations).unwrap();
+
+        let after = std::fs::metadata(&target).unwrap().len();
+        assert_eq!(
+            after, 0,
+            "0-byte placeholder must remain 0 bytes when mutations clear nothing real"
+        );
+    }
+
+    #[test]
+    fn placeholder_target_promotes_when_chunks_arrive() {
+        // Bug report's replace-chunks Case 2: source has chunks, target is the
+        // 0-byte poi placeholder. Target must be rewritten as a valid region
+        // file containing those chunks.
+        let dir = TempDir::new("placeholder-promote");
+        let target = dir.path().join("r.0.0.mca");
+        std::fs::write(&target, b"").unwrap();
+
+        let payload = vec![0xAAu8; 32];
+        let mutations = vec![(
+            slot_index(3, 4),
+            SlotState::Inline {
+                scheme: 2,
+                payload: payload.clone(),
+                timestamp: 42,
+            },
+        )];
+        apply_slot_mutations(&target, &mutations).unwrap();
+
+        let bytes = std::fs::read(&target).unwrap();
+        assert!(
+            bytes.len() >= HEADER_SECTORS * SECTOR_BYTES + SECTOR_BYTES,
+            "target must be promoted to header + at least one chunk sector, got {}",
+            bytes.len()
+        );
+        let recovered = read_slot(
+            &bytes,
+            slot_index(3, 4),
+            dir.path(),
+            region_coords(&target),
+            false,
+            "target",
+        )
+        .unwrap();
+        match recovered {
+            SlotState::Inline {
+                scheme,
+                payload: p,
+                timestamp,
+            } => {
+                assert_eq!(scheme, 2);
+                assert_eq!(p, payload);
+                assert_eq!(timestamp, 42);
+            }
+            other => panic!("expected inline slot, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn missing_target_with_only_empty_mutations_does_not_create_file() {
+        // Symmetric to placeholder-target: a missing target should not be
+        // materialized when no chunks end up present.
+        let dir = TempDir::new("missing-noop");
+        let target = dir.path().join("r.0.0.mca");
+        let mutations = vec![(slot_index(0, 0), SlotState::Empty)];
+        apply_slot_mutations(&target, &mutations).unwrap();
+        assert!(
+            !target.exists(),
+            "missing target with all-empty mutations must not be created"
+        );
+    }
+
+    #[test]
+    fn placeholder_target_with_inline_source_keeps_existing_chunks_intact() {
+        // Belt-and-braces: the promote path must not touch sibling .mcc state.
+        // A placeholder target carries no priors; there is nothing to delete.
+        // Verify no orphan files appear under target_dir.
+        let dir = TempDir::new("placeholder-clean");
+        let target = dir.path().join("r.0.0.mca");
+        std::fs::write(&target, b"").unwrap();
+
+        let mutations = vec![(
+            slot_index(1, 2),
+            SlotState::Inline {
+                scheme: 2,
+                payload: vec![0xCCu8; 16],
+                timestamp: 7,
+            },
+        )];
+        apply_slot_mutations(&target, &mutations).unwrap();
+
+        // Only the .mca should exist; no stray .mcc
+        let names: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["r.0.0.mca".to_string()], "got {:?}", names);
+    }
+
+    #[test]
+    fn populated_target_with_empty_mutations_clears_slot() {
+        // Regression: the "skip write" optimization must only fire on
+        // placeholder targets. A real target with one chunk must still be
+        // rewritten when that chunk is removed.
+        let dir = TempDir::new("populated-clear");
+        let target = dir.path().join("r.0.0.mca");
+        let bytes = region_with_one_chunk(3, 4, 2, &[0xBBu8; 16]);
+        std::fs::write(&target, &bytes).unwrap();
+
+        let mutations = vec![(slot_index(3, 4), SlotState::Empty)];
+        apply_slot_mutations(&target, &mutations).unwrap();
+
+        let after = std::fs::read(&target).unwrap();
+        assert_eq!(
+            after.len(),
+            HEADER_SECTORS * SECTOR_BYTES,
+            "after clearing the only chunk, target must shrink to header-only"
+        );
+        // All slot entries zero
+        assert!(after[..SECTOR_BYTES].iter().all(|&b| b == 0));
+    }
+
+    /// Build an 8192-byte all-zero region header, then patch slot `(x, z)` to
+    /// point to `(sector_offset, sector_count)`. No chunk record is written —
+    /// callers add one (or skip, to deliberately make it OOB).
+    fn header_with_slot(x: u8, z: u8, sector_offset: u32, sector_count: u8) -> Vec<u8> {
+        let mut out = vec![0u8; HEADER_SECTORS * SECTOR_BYTES];
+        let slot = slot_index(x, z);
+        let off = slot * 4;
+        out[off] = ((sector_offset >> 16) & 0xFF) as u8;
+        out[off + 1] = ((sector_offset >> 8) & 0xFF) as u8;
+        out[off + 2] = (sector_offset & 0xFF) as u8;
+        out[off + 3] = sector_count;
+        out
+    }
+
+    #[test]
+    fn read_slot_treats_header_overlap_as_empty() {
+        // Vanilla (1.16+) clears any slot whose offset points into the
+        // header sectors. Mirror that: sector_offset = 1 (i.e., into the
+        // timestamp table) must be treated as empty, never read as a chunk.
+        let bytes = header_with_slot(0, 0, 1, 1);
+        let state = read_slot(&bytes, slot_index(0, 0), Path::new(""), None, false, "test").unwrap();
+        assert!(matches!(state, SlotState::Empty), "got {:?}", state);
+    }
+
+    #[test]
+    fn read_slot_treats_header_past_eof_as_empty() {
+        // Header points to a sector past EOF. mcmap previously errored out;
+        // vanilla returns null. Match vanilla.
+        let bytes = header_with_slot(5, 7, 99, 1);
+        let state = read_slot(&bytes, slot_index(5, 7), Path::new(""), None, false, "test").unwrap();
+        assert!(matches!(state, SlotState::Empty), "got {:?}", state);
+    }
+
+    #[test]
+    fn read_slot_treats_zero_length_as_empty() {
+        // Slot points at sector 2; sector 2 contains a length-0 record, which
+        // is invalid (length must include at least the scheme byte).
+        let mut bytes = header_with_slot(1, 1, 2, 1);
+        bytes.resize(3 * SECTOR_BYTES, 0); // 4096 bytes of chunk data, all zeros
+        // length field at bytes[8192..8196] is already 0 -> invalid
+        let state = read_slot(&bytes, slot_index(1, 1), Path::new(""), None, false, "test").unwrap();
+        assert!(matches!(state, SlotState::Empty), "got {:?}", state);
+    }
+
+    #[test]
+    fn read_slot_treats_oversized_length_as_empty() {
+        // Vanilla rejects records where the claimed length exceeds the slot's
+        // sector reservation. Build a slot with sector_count=1 (so max_length
+        // = 4096) but encode length=99999 in the chunk record.
+        let mut bytes = header_with_slot(2, 3, 2, 1);
+        bytes.resize(3 * SECTOR_BYTES, 0);
+        // length = 99999 (way > 4096)
+        bytes[2 * SECTOR_BYTES..2 * SECTOR_BYTES + 4]
+            .copy_from_slice(&99999u32.to_be_bytes());
+        bytes[2 * SECTOR_BYTES + 4] = 2; // scheme = zlib
+        let state = read_slot(&bytes, slot_index(2, 3), Path::new(""), None, false, "test").unwrap();
+        assert!(matches!(state, SlotState::Empty), "got {:?}", state);
+    }
+
+    #[test]
+    fn read_slot_treats_payload_past_eof_as_empty() {
+        // Slot points at sector 2 with sector_count=2 (so max_length=8192),
+        // length is within the reservation, but the file is truncated mid-
+        // payload — only one sector of payload data is on disk. Match
+        // vanilla's "stream truncated -> null" behavior.
+        let mut bytes = header_with_slot(4, 5, 2, 2);
+        // length = 5000 bytes (claims to extend into the second payload
+        // sector that we deliberately won't write); within the 8192-byte
+        // reservation, so the length-field check passes.
+        bytes.resize(2 * SECTOR_BYTES + 4096, 0); // only one payload sector on disk
+        bytes[2 * SECTOR_BYTES..2 * SECTOR_BYTES + 4]
+            .copy_from_slice(&5000u32.to_be_bytes());
+        bytes[2 * SECTOR_BYTES + 4] = 2;
+        let state = read_slot(&bytes, slot_index(4, 5), Path::new(""), None, false, "test").unwrap();
+        assert!(matches!(state, SlotState::Empty), "got {:?}", state);
+    }
+
+    #[test]
+    fn read_slot_corrupt_target_is_recoverable_via_apply() {
+        // End-to-end: apply_slot_mutations against a target with a corrupt
+        // slot in a position the user is NOT mutating must succeed (the
+        // corrupt slot is silently dropped — same effect as vanilla zeroing
+        // it on read). The mutation slot is applied normally.
+        let dir = TempDir::new("corrupt-target");
+        let target = dir.path().join("r.0.0.mca");
+        // Build: corrupt slot at (10, 10) (sector_offset past EOF), good
+        // empty rest. Then mutate slot (3, 4) with a normal inline chunk.
+        let bytes = header_with_slot(10, 10, 999, 1);
+        // No chunk data — sector 999 is far past EOF
+        std::fs::write(&target, &bytes).unwrap();
+
+        let mutations = vec![(
+            slot_index(3, 4),
+            SlotState::Inline {
+                scheme: 2,
+                payload: vec![0xDDu8; 16],
+                timestamp: 99,
+            },
+        )];
+        apply_slot_mutations(&target, &mutations).unwrap();
+
+        // After apply, the corrupt slot is gone (zeroed in re-emit) and the
+        // mutation slot is present.
+        let after = std::fs::read(&target).unwrap();
+        let corrupt =
+            read_slot(&after, slot_index(10, 10), dir.path(), region_coords(&target), false, "after")
+                .unwrap();
+        assert!(matches!(corrupt, SlotState::Empty));
+        let mutated =
+            read_slot(&after, slot_index(3, 4), dir.path(), region_coords(&target), false, "after")
+                .unwrap();
+        assert!(matches!(mutated, SlotState::Inline { .. }));
     }
 }
