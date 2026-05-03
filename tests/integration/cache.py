@@ -65,6 +65,14 @@ MOD_SOURCES: dict[str, dict] = {
         "game_version": "1.12.2",
         "loader": "forge",
     },
+    # REI 2.x is Mixin-based and depends on MixinBooter at coremod-load time.
+    # Fetch the latest 1.12.2 build alongside the REI jar.
+    "mixinbooter-1.12.2": {
+        "kind": "modrinth",
+        "project": "mixinbooter",
+        "game_version": "1.12.2",
+        "loader": "forge",
+    },
 }
 
 
@@ -294,6 +302,32 @@ def java_bin(major: int) -> Path:
 # ---------------------------------------------------------------------------
 
 
+def _jvm_proxy_opts(env: dict[str, str]) -> list[str]:
+    """Translate HTTPS_PROXY / HTTP_PROXY env vars into JVM proxy properties.
+
+    The JVM's URL/HTTPS client doesn't read those env vars on its own — it
+    needs `-Dhttp(s).proxyHost`/`-Dhttp(s).proxyPort` system properties. This
+    matters when running behind a non-transparent local proxy (e.g. Clash on
+    localhost:7890), where the system's own routing would otherwise mangle
+    the JVM's TLS handshakes.
+    """
+    from urllib.parse import urlparse
+
+    opts: list[str] = []
+    for env_key, jvm_prefix in (("HTTPS_PROXY", "https"), ("HTTP_PROXY", "http")):
+        raw = env.get(env_key) or env.get(env_key.lower())
+        if not raw:
+            continue
+        parsed = urlparse(raw)
+        host = parsed.hostname
+        port = parsed.port
+        if not host or not port:
+            continue
+        opts.append(f"-D{jvm_prefix}.proxyHost={host}")
+        opts.append(f"-D{jvm_prefix}.proxyPort={port}")
+    return opts
+
+
 def forge_installer_jar(mc_version: str) -> Path:
     forge_ver = FORGE_BUILDS[mc_version]
     installer_name = f"forge-{mc_version}-{forge_ver}-installer.jar"
@@ -340,11 +374,13 @@ def forge_install(mc_version: str, java_bin_path: Path) -> Path:
     env = os.environ.copy()
     # Headless + long socket timeouts (60s connect, 180s read) so the
     # mirror-list and Mojang manifest fetches survive slow links.
-    env["JAVA_TOOL_OPTIONS"] = (
-        "-Djava.awt.headless=true "
-        "-Dsun.net.client.defaultConnectTimeout=60000 "
-        "-Dsun.net.client.defaultReadTimeout=180000"
-    )
+    jvm_opts = [
+        "-Djava.awt.headless=true",
+        "-Dsun.net.client.defaultConnectTimeout=60000",
+        "-Dsun.net.client.defaultReadTimeout=180000",
+    ]
+    jvm_opts.extend(_jvm_proxy_opts(env))
+    env["JAVA_TOOL_OPTIONS"] = " ".join(jvm_opts)
 
     last_err: str = ""
     for attempt in range(1, 4):

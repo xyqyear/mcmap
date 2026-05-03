@@ -153,12 +153,96 @@ class ServerInstance:
             src = mod_jar(mod.key)
             shutil.copy2(src, mods_dir / mod.filename)
 
+    def _ensure_legacy_origin_spawn(self) -> None:
+        """Pre-boot 1.7.10/1.12.2 worlds once to relocate spawn to (0, 4, 0).
+
+        Why: legacy /setblock and /testforblock both refuse to operate on
+        unloaded chunks ("Cannot place block outside of the world"), and
+        only the 17x17 spawn-chunks region around the world's spawn point
+        is kept loaded with no players online. The vanilla spawn-finder
+        with our fixed seed lands far from origin (e.g. chunk (-49, 95)),
+        so chunk (0, 0) and friends are never loaded for tests.
+
+        We can't /forceload (1.13.1+ only), and /setworldspawn doesn't
+        retroactively load chunks within the same boot. So we do a one-
+        shot pre-boot per work_dir: boot, /setworldspawn 0 4 0, save+stop.
+        Subsequent boots in the same work_dir then load chunks (-8..8)
+        around (0, 0) automatically, which is what the tests need.
+        """
+        if self.flavor.mc_version not in ("1.7.10", "1.12.2"):
+            return
+        if (self.work_dir / "world" / "level.dat").exists():
+            return
+        log.info("Pre-booting %s in %s to relocate spawn to (0, 4, 0)",
+                 self.flavor.id, self.work_dir)
+        cmd = self._server_command()
+        log_fh = (self.work_dir / "preboot.log").open(
+            "w", encoding="utf-8", errors="replace"
+        )
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(self.work_dir),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            env={**os.environ, "JAVA_TOOL_OPTIONS": "-Djava.awt.headless=true"},
+        )
+        # Wait for boot, send commands via RCON, then stop.
+        try:
+            self._wait_for_boot_in(proc, log_fh)
+            rcon = MCRcon("127.0.0.1", RCON_PASSWORD,
+                          port=self.rcon_port, timeout=10)
+            deadline = time.monotonic() + RCON_CONNECT_TIMEOUT_SECONDS
+            while True:
+                try:
+                    rcon.connect()
+                    break
+                except Exception:
+                    if time.monotonic() > deadline:
+                        raise
+                    time.sleep(0.5)
+            rcon.command("setworldspawn 0 4 0")
+            rcon.command("save-off")
+            rcon.command("save-all")
+            rcon.command("stop")
+            rcon.disconnect()
+            try:
+                proc.wait(timeout=STOP_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=10)
+        finally:
+            log_fh.close()
+        # Re-pick a free RCON port for the real boot — the JVM may not
+        # have released the prior one in time.
+        self.rcon_port = _free_port()
+        self._write_server_properties()
+
+    def _wait_for_boot_in(
+        self, proc: subprocess.Popen[str], log_fh
+    ) -> None:
+        """Stream `proc` stdout to log_fh until BOOT_DONE_RE matches."""
+        assert proc.stdout is not None
+        deadline = time.monotonic() + BOOT_TIMEOUT_SECONDS
+        for line in proc.stdout:
+            log_fh.write(line)
+            log_fh.flush()
+            if BOOT_DONE_RE.search(line):
+                return
+            if time.monotonic() > deadline:
+                raise TimeoutError(
+                    f"pre-boot did not reach 'Done' within {BOOT_TIMEOUT_SECONDS}s"
+                )
+
     def start(self) -> None:
         if self.proc is not None:
             raise RuntimeError("server already started")
         self._write_eula()
         self._write_server_properties()
         self._install_mods()
+        self._ensure_legacy_origin_spawn()
         cmd = self._server_command()
         log.info("Booting %s in %s (rcon port %d)", self.flavor.id, self.work_dir, self.rcon_port)
         log_fh = self.log_path.open("w", encoding="utf-8", errors="replace")
@@ -270,7 +354,7 @@ class ServerInstance:
             reply = self.cmd(f"testforblock {x} {y} {z} {block}")
             if "(expected:" in reply:
                 raise AssertionError(f"testforblock failed: {reply!r}")
-            if "The block at" not in reply:
+            if "Successfully found the block" not in reply:
                 raise AssertionError(f"unexpected testforblock reply: {reply!r}")
             return
         # Modern: use a scoreboard objective that we lazily create. Force-load

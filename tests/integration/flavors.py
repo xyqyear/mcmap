@@ -50,7 +50,7 @@ def build_flavors() -> list[Flavor]:
             java_major=8,
             mods=[ModSpec(key="notenoughids-1.7.10", filename="NotEnoughIDs.jar")],
             level_type="FLAT",
-            generator_settings="3;minecraft:bedrock;1",
+            generator_settings="3;7,2*3,2;1",
             palette_format="legacy",
         ),
         Flavor(
@@ -59,9 +59,12 @@ def build_flavors() -> list[Flavor]:
             mc_version="1.12.2",
             forge_version="14.23.5.2859",
             java_major=8,
-            mods=[ModSpec(key="rei-1.12.2", filename="RoughlyEnoughIDs.jar")],
+            mods=[
+                ModSpec(key="rei-1.12.2", filename="RoughlyEnoughIDs.jar"),
+                ModSpec(key="mixinbooter-1.12.2", filename="MixinBooter.jar"),
+            ],
             level_type="FLAT",
-            generator_settings="3;minecraft:bedrock;1",
+            generator_settings="3;7,2*3,2;1",
             palette_format="forge112",
         ),
         Flavor(
