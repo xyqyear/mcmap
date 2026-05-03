@@ -48,11 +48,31 @@ STOP_TIMEOUT_SECONDS = 120
 RCON_PASSWORD = "mcmap-test"
 
 
-def _free_port() -> int:
-    """Return an unused TCP port, racy but adequate for our test harness."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+def _free_port(avoid: set[int] | None = None) -> int:
+    """Return an unused TCP port not in `avoid`, racy but adequate.
+
+    `bind(0)` returns whatever ephemeral port the kernel hands out next, and
+    on a busy CI runner that can be a port we *just* used in this same
+    process — see the pre-boot pattern in `_ensure_legacy_origin_spawn`.
+    Reusing a port across two JVM lifetimes within ~60s on Linux means the
+    second JVM hits a TIME_WAIT entry from the first JVM's torn-down RCON
+    connection and silently fails to bind its RCON listener (the boot still
+    reports "Done", but the RCON port refuses connections). Caller passes
+    `avoid` to force a fresh port.
+    """
+    avoid = avoid or set()
+    last_port = -1
+    for _ in range(50):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+        last_port = port
+        if port not in avoid:
+            return port
+    raise RuntimeError(
+        f"could not find a free port outside avoid={sorted(avoid)} "
+        f"after 50 tries (last={last_port})"
+    )
 
 
 class ServerInstance:
@@ -60,13 +80,22 @@ class ServerInstance:
         self.flavor = flavor
         self.work_dir = work_dir
         self.work_dir.mkdir(parents=True, exist_ok=True)
-        self.rcon_port = _free_port()
+        # All TCP ports this instance has ever bound (RCON or game). Used to
+        # force successive port picks onto fresh values, see `_free_port`.
+        self._used_ports: set[int] = set()
+        self.rcon_port = self._pick_port()
         self.proc: subprocess.Popen[str] | None = None
         self.rcon: MCRcon | None = None
         self.log_path = work_dir / "server.log"
         self._log_buffer: list[str] = []
         self._log_lock = threading.Lock()
         self._reader_thread: threading.Thread | None = None
+
+    def _pick_port(self) -> int:
+        """Pick a port we haven't used yet on this instance, and remember it."""
+        port = _free_port(avoid=self._used_ports)
+        self._used_ports.add(port)
+        return port
 
     # -- Context manager ----------------------------------------------------
 
@@ -122,7 +151,7 @@ class ServerInstance:
             "enable-rcon": "true",
             "rcon.password": RCON_PASSWORD,
             "rcon.port": str(self.rcon_port),
-            "server-port": str(_free_port()),
+            "server-port": str(self._pick_port()),
             "view-distance": "3",
             "spawn-protection": "0",
             "gamemode": "1",
@@ -173,8 +202,10 @@ class ServerInstance:
             return
         if (self.work_dir / "world" / "level.dat").exists():
             return
-        log.info("Pre-booting %s in %s to relocate spawn to (0, 4, 0)",
-                 self.flavor.id, self.work_dir)
+        log.info(
+            "Pre-booting %s in %s to relocate spawn to (0, 4, 0) (rcon port %d)",
+            self.flavor.id, self.work_dir, self.rcon_port,
+        )
         cmd = self._server_command()
         log_fh = (self.work_dir / "preboot.log").open(
             "w", encoding="utf-8", errors="replace"
@@ -215,9 +246,10 @@ class ServerInstance:
                 proc.wait(timeout=10)
         finally:
             log_fh.close()
-        # Re-pick a free RCON port for the real boot — the JVM may not
-        # have released the prior one in time.
-        self.rcon_port = _free_port()
+        # Re-pick a fresh RCON port for the real boot, distinct from every
+        # port this instance has bound so far (see `_free_port` for why
+        # bind(0) alone isn't enough on Linux).
+        self.rcon_port = self._pick_port()
         self._write_server_properties()
 
     def _wait_for_boot_in(
