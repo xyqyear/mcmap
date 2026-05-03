@@ -69,6 +69,22 @@ def assert_result(events: list[dict]) -> dict:
     return last
 
 
+def assert_error(events: list[dict]) -> dict:
+    """Assert the event stream ended with an `error` event; return it.
+
+    mcmap commands always emit a final type=error JSON event under --json
+    when execute() returns Err. (clap-level argument errors exit before
+    JSON output engages — those are stderr-only and out of scope here.)
+    """
+    assert events, "no events emitted"
+    last = events[-1]
+    assert last.get("type") == "error", f"final event was not error: {last!r}"
+    assert isinstance(last.get("message"), str) and last["message"], (
+        f"error event missing message: {last!r}"
+    )
+    return last
+
+
 def find_event(events: list[dict], **fields) -> dict | None:
     """Return the first event matching all `fields`, or None."""
     for ev in events:

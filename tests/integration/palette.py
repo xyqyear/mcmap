@@ -112,15 +112,15 @@ def palette_lookup(palette_path: Path, key: str) -> tuple[int, int, int, int] | 
 
     Modern palettes are flat `{"ns:name": [r,g,b,a]}`. Legacy/forge112 are
     `{"format": ..., "blocks": {"id|meta": [r,g,b,a]}}` keyed by the FML
-    numeric id. For legacy/forge112 the caller must pre-resolve the
-    `minecraft:<name>` to its `id|meta` key via the level.dat — that's
-    out of scope for this helper, which only handles modern.
+    numeric id. The `key` should already be in the right shape for the
+    palette's format (use `level_dat.palette_key_for_block` to resolve).
     """
     import json
     data = json.loads(palette_path.read_text())
     if isinstance(data, dict) and data.get("format") in ("1.7.10", "1.12.2"):
-        return None  # caller must resolve numeric key
-    rgba = data.get(key)
+        rgba = (data.get("blocks") or {}).get(key)
+    else:
+        rgba = data.get(key)
     if rgba is None:
         return None
     return tuple(int(x) for x in rgba)

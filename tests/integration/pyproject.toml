@@ -8,6 +8,7 @@ dependencies = [
     "requests>=2.32",
     "mcrcon>=0.7.0",
     "Pillow>=10.0",
+    "nbtlib>=2.0",
 ]
 
 [tool.pytest.ini_options]
