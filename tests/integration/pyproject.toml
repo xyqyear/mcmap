@@ -1,0 +1,20 @@
+[project]
+name = "mcmap-integration-tests"
+version = "0.0.0"
+description = "Integration tests for mcmap against real Minecraft servers"
+requires-python = ">=3.10"
+dependencies = [
+    "pytest>=8.0",
+    "requests>=2.32",
+    "mcrcon>=0.7.0",
+    "Pillow>=10.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["."]
+python_files = ["test_*.py"]
+addopts = "-ra -v"
+markers = [
+    "flavor(name): Minecraft flavor this test exercises",
+    "needs_server: requires a running Minecraft server",
+]

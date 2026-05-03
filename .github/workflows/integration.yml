@@ -1,0 +1,97 @@
+name: Integration tests
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build mcmap binary
+    runs-on: ubuntu-latest
+    outputs:
+      artifact-name: ${{ steps.upload.outputs.artifact-name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: integration-build
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Upload mcmap binary
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcmap-bin
+          path: target/release/mcmap
+          if-no-files-found: error
+          retention-days: 1
+
+  integration:
+    name: ${{ matrix.flavor }}
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor:
+          - forge-1.7.10-neid
+          - forge-1.12.2-rei
+          - vanilla-latest
+
+    env:
+      MCMAP_INTEGRATION_TESTS: "1"
+      MCMAP_FLAVOR: ${{ matrix.flavor }}
+      MCMAP_TEST_CACHE: /tmp/mcmap-test-cache
+      MCMAP_BIN: ${{ github.workspace }}/mcmap-bin/mcmap
+      # NotEnoughIDs is hosted on GitHub Releases; an authenticated request
+      # avoids the 60/hour anonymous rate limit on shared CI runners.
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download mcmap binary
+        uses: actions/download-artifact@v4
+        with:
+          name: mcmap-bin
+          path: mcmap-bin
+
+      - name: Make mcmap executable
+        run: chmod +x "$MCMAP_BIN"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: tests/integration/pyproject.toml
+
+      - name: Restore mcmap-test-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/mcmap-test-cache
+          key: mcmap-test-cache-${{ matrix.flavor }}-${{ hashFiles('tests/integration/cache.py', 'tests/integration/flavors.py') }}
+          restore-keys: |
+            mcmap-test-cache-${{ matrix.flavor }}-
+
+      - name: Run integration tests
+        working-directory: tests/integration
+        run: uv run --with-requirements pyproject.toml pytest -ra
+
+      - name: Upload server logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-logs-${{ matrix.flavor }}
+          path: |
+            /tmp/mcmap-test-run-*/**/server.log
+            /tmp/mcmap-test-run-*/**/logs/**
+          if-no-files-found: ignore
+          retention-days: 7
