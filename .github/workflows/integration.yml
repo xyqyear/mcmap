@@ -83,7 +83,7 @@ jobs:
 
       - name: Run integration tests
         working-directory: tests/integration
-        run: uv run --with-requirements pyproject.toml pytest -ra
+        run: uv run pytest -ra
 
       - name: Upload server logs on failure
         if: failure()
