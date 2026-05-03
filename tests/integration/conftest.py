@@ -78,17 +78,25 @@ def _flavor_id_of(item: pytest.Item) -> str | None:
 
 
 @pytest.fixture(scope="session")
-def run_root(tmp_path_factory: pytest.TempPathFactory) -> Path:
+def run_root(
+    request: pytest.FixtureRequest,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Path:
     """A persistent per-session run root under /tmp/mcmap-test-run-<rand>.
 
-    Stays alive for the session; wiped on session finish unless KEEP_RUN=1.
+    Stays alive for the session; wiped on session finish unless KEEP_RUN=1
+    *or* any test failed. Keeping on failure is what lets CI's
+    `upload-artifact` step pick up `server.log` / `preboot.log` /
+    `server.properties` for the failing test — without it, this teardown
+    runs before the workflow step and wipes everything first.
     """
     keep = os.environ.get("KEEP_RUN") == "1"
     base = Path("/tmp") / f"mcmap-test-run-{secrets.token_hex(8)}"
     base.mkdir(parents=True, exist_ok=True)
     yield base
-    if not keep:
-        shutil.rmtree(base, ignore_errors=True)
+    if keep or request.session.testsfailed:
+        return
+    shutil.rmtree(base, ignore_errors=True)
 
 
 @pytest.fixture
