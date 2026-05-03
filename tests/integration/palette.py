@@ -1,6 +1,6 @@
-"""Generate per-flavor palette.json files for tests that need to render or
-analyze. Modern palettes need only a client jar; legacy/forge112 need a
-freshly generated level.dat from a real world boot of that flavor.
+"""Generate per-flavor palette.json files for tests that need to render.
+Modern palettes need only a client jar; legacy/forge112 need a freshly
+generated level.dat from a real world boot of that flavor.
 
 Palettes are cached at the session level; the same flavor's palette is
 shared across all tests in a session.
