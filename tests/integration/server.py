@@ -48,31 +48,57 @@ STOP_TIMEOUT_SECONDS = 120
 RCON_PASSWORD = "mcmap-test"
 
 
-def _free_port(avoid: set[int] | None = None) -> int:
-    """Return an unused TCP port not in `avoid`, racy but adequate.
+# Process-wide port history. Every port any ServerInstance has bound in this
+# pytest run — RCON listener, RCON test client, game listener — is tracked
+# here so we never hand the same port to a later JVM that's about to bind
+# without SO_REUSEADDR. Linux's default for `bind(0)` *should* skip ports
+# with TIME_WAIT entries, but on busy CI runners we still see "boot reaches
+# Done, RCON port refuses connections" — the cleanest mitigation is to
+# never offer a port we've ever used in this process.
+_USED_PORTS: set[int] = set()
+_USED_PORTS_LOCK = threading.Lock()
 
-    `bind(0)` returns whatever ephemeral port the kernel hands out next, and
-    on a busy CI runner that can be a port we *just* used in this same
-    process — see the pre-boot pattern in `_ensure_legacy_origin_spawn`.
-    Reusing a port across two JVM lifetimes within ~60s on Linux means the
-    second JVM hits a TIME_WAIT entry from the first JVM's torn-down RCON
-    connection and silently fails to bind its RCON listener (the boot still
-    reports "Done", but the RCON port refuses connections). Caller passes
-    `avoid` to force a fresh port.
+
+def _free_port(avoid: set[int] | None = None) -> int:
+    """Return a TCP port not in `avoid` and not previously handed out in this
+    process. Racy but adequate.
+
+    See `_USED_PORTS` for the rationale.
     """
-    avoid = avoid or set()
+    extra_avoid = avoid or set()
+    with _USED_PORTS_LOCK:
+        already = set(_USED_PORTS)
+    combined = already | extra_avoid
     last_port = -1
-    for _ in range(50):
+    for _ in range(200):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(("127.0.0.1", 0))
             port = s.getsockname()[1]
         last_port = port
-        if port not in avoid:
+        if port not in combined:
+            with _USED_PORTS_LOCK:
+                _USED_PORTS.add(port)
             return port
     raise RuntimeError(
-        f"could not find a free port outside avoid={sorted(avoid)} "
-        f"after 50 tries (last={last_port})"
+        f"could not find a free port outside {len(combined)} avoided ports "
+        f"after 200 tries (last={last_port})"
     )
+
+
+def _diagnose_listening_ports() -> str:
+    """Return `ss -tln` output, or an explanation string if `ss` isn't on
+    PATH. Used in the RCON-refused error path so we can see whether the JVM
+    bound *any* listener on the expected port.
+    """
+    try:
+        proc = subprocess.run(
+            ["ss", "-tln"], capture_output=True, text=True, timeout=5
+        )
+        return proc.stdout or proc.stderr or "(empty ss output)"
+    except FileNotFoundError:
+        return "(ss not on PATH)"
+    except Exception as e:  # pragma: no cover — best-effort diagnostic
+        return f"(ss invocation failed: {e})"
 
 
 class ServerInstance:
@@ -80,22 +106,13 @@ class ServerInstance:
         self.flavor = flavor
         self.work_dir = work_dir
         self.work_dir.mkdir(parents=True, exist_ok=True)
-        # All TCP ports this instance has ever bound (RCON or game). Used to
-        # force successive port picks onto fresh values, see `_free_port`.
-        self._used_ports: set[int] = set()
-        self.rcon_port = self._pick_port()
+        self.rcon_port = _free_port()
         self.proc: subprocess.Popen[str] | None = None
         self.rcon: MCRcon | None = None
         self.log_path = work_dir / "server.log"
         self._log_buffer: list[str] = []
         self._log_lock = threading.Lock()
         self._reader_thread: threading.Thread | None = None
-
-    def _pick_port(self) -> int:
-        """Pick a port we haven't used yet on this instance, and remember it."""
-        port = _free_port(avoid=self._used_ports)
-        self._used_ports.add(port)
-        return port
 
     # -- Context manager ----------------------------------------------------
 
@@ -151,7 +168,7 @@ class ServerInstance:
             "enable-rcon": "true",
             "rcon.password": RCON_PASSWORD,
             "rcon.port": str(self.rcon_port),
-            "server-port": str(self._pick_port()),
+            "server-port": str(_free_port()),
             "view-distance": "3",
             "spawn-protection": "0",
             "gamemode": "1",
@@ -247,9 +264,9 @@ class ServerInstance:
         finally:
             log_fh.close()
         # Re-pick a fresh RCON port for the real boot, distinct from every
-        # port this instance has bound so far (see `_free_port` for why
-        # bind(0) alone isn't enough on Linux).
-        self.rcon_port = self._pick_port()
+        # port any ServerInstance in this pytest run has bound (see
+        # `_USED_PORTS` for the rationale).
+        self.rcon_port = _free_port()
         self._write_server_properties()
 
     def _wait_for_boot_in(
@@ -335,7 +352,26 @@ class ServerInstance:
             except Exception as e:
                 last_err = e
                 time.sleep(0.5)
-        raise RuntimeError(f"failed to connect to RCON on port {self.rcon_port}: {last_err}")
+        # Diagnostic dump: a connection-refused after Done means the server
+        # binary booted but failed to start its RCON listener. Capture
+        # everything that might explain why.
+        ss_out = _diagnose_listening_ports()
+        rcon_lines = [
+            line for line in self._log_buffer
+            if "rcon" in line.lower() or "RCon" in line
+        ]
+        try:
+            props = (self.work_dir / "server.properties").read_text()
+        except Exception as e:  # pragma: no cover
+            props = f"(could not read server.properties: {e})"
+        raise RuntimeError(
+            f"failed to connect to RCON on port {self.rcon_port}: {last_err}\n"
+            f"--- last 50 lines of server.log ---\n{self._tail_log(50)}"
+            f"--- RCON-tagged log lines ({len(rcon_lines)}) ---\n"
+            f"{''.join(rcon_lines) or '(none)'}\n"
+            f"--- ss -tln ---\n{ss_out}\n"
+            f"--- server.properties ---\n{props}"
+        )
 
     # -- Commands -----------------------------------------------------------
 

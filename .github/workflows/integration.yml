@@ -92,6 +92,8 @@ jobs:
           name: server-logs-${{ matrix.flavor }}
           path: |
             /tmp/mcmap-test-run-*/**/server.log
+            /tmp/mcmap-test-run-*/**/preboot.log
+            /tmp/mcmap-test-run-*/**/server.properties
             /tmp/mcmap-test-run-*/**/logs/**
           if-no-files-found: ignore
           retention-days: 7
