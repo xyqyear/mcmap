@@ -73,11 +73,11 @@ is intentionally left alone so it stays reusable across runs.
 
 ## Examples
 
-### Block-colored Render
+![Vanilla 1.21 Example](readme-assets/vanilla_example.png)
 
-Renders blocks with their actual colors from the palette:
+![Nova (Forge 1.12.2 + REI) Example](readme-assets/nova_example.png)
 
-![Render Example](readme-assets/render_example.png)
+![GTNH (1.7.10) Example](readme-assets/gtnh_example.png)
 
 ## Commands
 
