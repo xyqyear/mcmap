@@ -77,7 +77,6 @@ impl<'a> RenderEngine for TopShadeRenderer<'a> {
     ) -> [Rgba; 16 * 16] {
         let fa_renderer =
             fastanvil::TopShadeRenderer::new(self.palette.fastanvil_palette(), self.height_mode);
-        let north_fa = north.map(|n| n.inner());
-        fa_renderer.render(chunk.inner(), north_fa)
+        fa_renderer.render(chunk, north)
     }
 }
