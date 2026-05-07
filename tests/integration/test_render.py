@@ -45,6 +45,7 @@ def _setup_marked_world(work_dir: Path, flavor: Flavor) -> Path:
     with ServerInstance(flavor, work_dir) as srv:
         for (x, z), block in MARKERS.items():
             srv.setblock(x, 64, z, block)
+            srv.assert_block(x, 64, z, block)
     region_dir = overworld_region_dir(work_dir)
     if not region_dir.is_dir():
         raise RuntimeError(f"no region dir at {region_dir} after boot")
