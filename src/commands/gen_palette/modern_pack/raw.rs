@@ -101,6 +101,38 @@ struct ForgeDefaults {
     textures: Option<HashMap<String, String>>,
 }
 
+/// Drop top-level keys not recognized by either the strict or Forge-marker
+/// blockstate parsers. Many mods extend the format with siblings of
+/// `variants` / `multipart`:
+///   - mcresources (TFC, Firmalife): `__comment__`
+///   - athena (the_bumblezone, others): `athena:loader`, `textures`,
+///     `connect_to`
+/// Both fastanvil's strict `Blockstate` and our `RawBlockstate` are
+/// externally-tagged enums, so any unknown sibling key fails the whole parse.
+/// Whitelist only the keys the parsers can actually consume; everything else
+/// is mod-extension noise that's safe to drop for color-palette purposes.
+/// Returns `None` if the input isn't JSON or no scrubbing was needed (caller
+/// skips the re-serialize cost).
+pub fn scrub_extension_keys(bytes: &[u8]) -> Option<Vec<u8>> {
+    let mut value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    let serde_json::Value::Object(map) = &mut value else {
+        return None;
+    };
+    const KEEP: &[&str] = &["variants", "multipart", "forge_marker", "defaults"];
+    let drop_keys: Vec<String> = map
+        .keys()
+        .filter(|k| !KEEP.contains(&k.as_str()))
+        .cloned()
+        .collect();
+    if drop_keys.is_empty() {
+        return None;
+    }
+    for k in drop_keys {
+        map.remove(&k);
+    }
+    serde_json::to_vec(&value).ok()
+}
+
 /// Try the standard format first, then the Forge-marker-1 fallback. Returns
 /// `None` when both fail — which usually means the JSON is malformed (or
 /// uses an even more obscure custom format).

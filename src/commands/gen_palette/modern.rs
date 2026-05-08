@@ -8,13 +8,14 @@
 use clap::Args;
 use fastanvil::{
     Rgba,
-    tex::{Blockstate, Renderer},
+    tex::{Blockstate, Renderer, Texture},
 };
 use log::{info, warn};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use super::modern_pack::raw::RawBlockstate;
 use super::modern_pack::{
     Counters, Pools, Resolver, add_base_colors, add_missing_blocks, default_regex_mappings,
     load_packs,
@@ -173,7 +174,7 @@ pub fn execute(args: ModernArgs) -> Result<()> {
     let mut palette: HashMap<String, Rgba> = HashMap::new();
 
     info!("Rendering blockstates");
-    let bs_names: Vec<String> = blockstates.keys().cloned().collect();
+    let tasks = collect_resolve_tasks(&blockstates, &raw_blockstates, &textures);
     {
         let mut resolver = Resolver {
             renderer: &mut renderer,
@@ -183,32 +184,16 @@ pub fn execute(args: ModernArgs) -> Result<()> {
             mappings: &mappings,
             counters: &mut counters,
         };
-        for name in &bs_names {
-            let bs = &blockstates[name];
-            match bs {
-                Blockstate::Variants(vars) => {
-                    for props in vars.keys() {
-                        let description =
-                            name.clone() + if props.is_empty() { "" } else { "|" } + props;
-                        if let Some(col) = resolver.resolve(name, Some(props)) {
-                            palette.insert(description, col);
-                        } else {
-                            warn!("Could not resolve: {}", description);
-                            failed += 1;
-                        }
-                    }
-                }
-                Blockstate::Multipart(_) => {
-                    // fastanvil can't render multipart; go straight to the
-                    // raw-model fallback (tier 1+) via props=None.
-                    if let Some(col) = resolver.resolve(name, None) {
-                        palette.insert(name.clone(), col);
-                    } else {
-                        warn!("Could not resolve multipart: {}", name);
-                        failed += 1;
-                    }
-                }
+        for task in &tasks {
+            if let Some(col) = resolver.resolve(&task.name, task.props.as_deref()) {
+                palette.insert(task.description.clone(), col);
+            } else if task.warn_on_failure {
+                warn!("Could not resolve: {}", task.description);
+                failed += 1;
             }
+            // Synthetic-name tasks silently skip on failure — they may not
+            // be real registered blocks (vanilla `block/bell_floor` and
+            // friends are sub-models of other blockstates).
         }
     }
 
@@ -270,4 +255,132 @@ pub fn execute(args: ModernArgs) -> Result<()> {
         counters: resolver_counters,
     });
     Ok(())
+}
+
+/// One block-key the resolver should attempt. Every variant of every block
+/// from every source becomes one of these — a flat work queue feeds a single
+/// resolution loop.
+struct ResolveTask {
+    /// Block name passed to `Resolver::resolve` — `"<ns>:<id>"`.
+    name: String,
+    /// Variant property string for `Resolver::resolve` (e.g. `"facing=north"`).
+    /// `None` means "no specific variant" — used for multipart blockstates and
+    /// for synthetic names that have no blockstate JSON.
+    props: Option<String>,
+    /// Palette key — `"<name>"` or `"<name>|<props>"`. Distinct from `name`
+    /// because the same `name` can produce multiple palette entries (one per
+    /// variant).
+    description: String,
+    /// Whether a resolution miss should log + count as `failed`. Strict and
+    /// raw-only blockstates do; synthetic names from texture paths do not
+    /// (they may not correspond to real registered blocks at all).
+    warn_on_failure: bool,
+}
+
+/// Build the work queue from all three sources:
+///
+///  1. Strict blockstates — `fastanvil::Blockstate` parses them. `Variants`
+///     produces one task per property combo; `Multipart` produces one task
+///     with `props=None` (fastanvil can't render multipart, so the resolver
+///     drops straight to the raw-model fallback).
+///  2. Raw-only blockstates — names that only round-tripped through our
+///     lenient parser (e.g. negative `x`/`y` rotations that fastanvil's
+///     `Variant` rejects: `atum:deadwood_branch`,
+///     `bumblezone:porous_honeycomb_block`). Same task shape, but the
+///     `fastanvil::Renderer` path is unreachable; the resolver still works
+///     because tier-1+ falls back to raw models.
+///  3. Synthetic names from texture paths. Many mods register blocks
+///     dynamically in Java without shipping a blockstate JSON (TFC's
+///     path-namespaced rocks `tfc:rock/raw/andesite`, TheAbyss fluids
+///     `theabyss:areno`, etc.). The texture is always
+///     `assets/<ns>/textures/(block|blocks)/<rest>.png`, so synthesize
+///     `<ns>:<rest>` for any such key not already covered above.
+fn collect_resolve_tasks(
+    blockstates: &HashMap<String, Blockstate>,
+    raw_blockstates: &HashMap<String, RawBlockstate>,
+    textures: &HashMap<String, Texture>,
+) -> Vec<ResolveTask> {
+    let mut tasks = Vec::new();
+
+    for (name, bs) in blockstates {
+        match bs {
+            Blockstate::Variants(vars) => {
+                for props in vars.keys() {
+                    tasks.push(ResolveTask::variant(name, props));
+                }
+            }
+            Blockstate::Multipart(_) => tasks.push(ResolveTask::whole_block(name)),
+        }
+    }
+
+    for (name, bs) in raw_blockstates {
+        if blockstates.contains_key(name) {
+            continue;
+        }
+        match bs {
+            RawBlockstate::Variants(vars) => {
+                for props in vars.keys() {
+                    tasks.push(ResolveTask::variant(name, props));
+                }
+            }
+            RawBlockstate::Multipart(_) => tasks.push(ResolveTask::whole_block(name)),
+        }
+    }
+
+    for tex_key in textures.keys() {
+        let Some(name) = synthesize_block_name(tex_key) else {
+            continue;
+        };
+        if blockstates.contains_key(&name) || raw_blockstates.contains_key(&name) {
+            continue;
+        }
+        tasks.push(ResolveTask::synthetic(name));
+    }
+
+    tasks
+}
+
+impl ResolveTask {
+    fn variant(name: &str, props: &str) -> Self {
+        let description = if props.is_empty() {
+            name.to_string()
+        } else {
+            format!("{}|{}", name, props)
+        };
+        Self {
+            name: name.to_string(),
+            props: Some(props.to_string()),
+            description,
+            warn_on_failure: true,
+        }
+    }
+
+    fn whole_block(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            props: None,
+            description: name.to_string(),
+            warn_on_failure: true,
+        }
+    }
+
+    fn synthetic(name: String) -> Self {
+        Self {
+            description: name.clone(),
+            name,
+            props: None,
+            warn_on_failure: false,
+        }
+    }
+}
+
+/// Convert a texture key like `"tfc:block/rock/raw/andesite"` to a candidate
+/// block name `"tfc:rock/raw/andesite"`. Returns `None` for textures that
+/// aren't under `block/` or `blocks/` (item icons, GUI sprites, etc.).
+fn synthesize_block_name(tex_key: &str) -> Option<String> {
+    let (ns, rest) = tex_key.split_once(':')?;
+    let stripped = rest
+        .strip_prefix("block/")
+        .or_else(|| rest.strip_prefix("blocks/"))?;
+    Some(format!("{}:{}", ns, stripped))
 }

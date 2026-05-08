@@ -1,18 +1,21 @@
-// Forge 1.12.2 chunk parsing (RoughlyEnoughIDs / JustEnoughIDs format).
+// Forge 1.10.x – 1.12.2 chunk parsing.
 //
-// REI keeps vanilla's `Sections[i].Blocks`/`Data` byte+nibble arrays but
-// reinterprets their meaning: each block's encoded value is a 12-bit *palette
-// index* (high 8 bits in `Blocks`, low 4 bits in `Data`). A new
-// `Sections[i].Palette` int-array maps that index to a vanilla
-// `IBlockState` id, encoded as `(block_id << 4) | meta`.
+// This decoder handles two on-disk shapes that share the same NBT root:
 //
-// REI also writes chunk-level `Biomes` as `TAG_INT_ARRAY[256]` instead of
-// vanilla's `TAG_BYTE_ARRAY[256]`. We tolerate both so this parser also works
-// for legacy chunks (saved before REI was installed).
+//   * Vanilla pre-REI (Forge 1.10.x and any 1.12.x server without REI/JEID).
+//     `Blocks` carries the low 8 bits of the block ID, optional `Add` is a
+//     nibble array of high 4 bits, `Data` is the 4-bit metadata. No
+//     `Palette` field.
+//   * REI / JEID (RoughlyEnoughIDs / JustEnoughIDs). Reinterprets the same
+//     `Blocks`/`Data` arrays as a 12-bit palette index (high 8 bits in
+//     `Blocks`, low 4 bits in `Data`); a new `Palette` int-array maps the
+//     index to `(block_id << 4) | meta`.
 //
-// Output shape matches `LegacyChunkData` exactly so the existing legacy
-// renderer takes both paths without modification. See
-// `docs/forge_1_12_2_rei.md` for the full format reference.
+// `decode_section` picks the path on the presence of `Palette`. REI also
+// writes chunk-level `Biomes` as `TAG_INT_ARRAY[256]` instead of vanilla's
+// `TAG_BYTE_ARRAY[256]`; we accept both. Output shape is `LegacyChunkData` in
+// either case so the existing legacy renderer takes both without changes.
+// See `docs/forge_1_12_2_rei.md` for the full REI format reference.
 
 use fastnbt::{IntArray, Value};
 use serde::Deserialize;
@@ -56,20 +59,26 @@ struct SectionNbt {
     /// Vanilla pre-REI: low 8 bits of the block ID.
     #[serde(rename = "Blocks", default)]
     blocks: Option<fastnbt::ByteArray>,
+    /// Vanilla pre-REI only: 2048 nibble bytes carrying the high 4 bits of
+    /// the block ID. REI never emits `Add` — the high bits live in `Blocks`
+    /// as part of the palette index.
+    #[serde(rename = "Add", default)]
+    add: Option<fastnbt::ByteArray>,
     /// REI: 2048 nibble bytes carrying the low 4 bits of the palette index.
     /// Vanilla pre-REI: 4-bit metadata.
     #[serde(rename = "Data", default)]
     data: Option<fastnbt::ByteArray>,
-    /// REI-only: maps palette index → `(block_id << 4) | meta`.
+    /// REI-only: maps palette index → `(block_id << 4) | meta`. Absence of
+    /// this field is the signal we're looking at a vanilla pre-REI section.
     #[serde(rename = "Palette", default)]
     palette: Option<IntArray>,
 }
 
-/// Parse a REI-format chunk. Returns `LegacyChunkData` so the existing
-/// renderer accepts the result without changes.
+/// Parse a Forge 1.10.x – 1.12.2 chunk. Returns `LegacyChunkData` so the
+/// existing renderer takes the result without changes.
 pub fn from_bytes(data: &[u8]) -> Result<LegacyChunkData, String> {
     let root: ChunkRoot =
-        fastnbt::from_bytes(data).map_err(|e| format!("REI chunk NBT parse: {}", e))?;
+        fastnbt::from_bytes(data).map_err(|e| format!("Forge chunk NBT parse: {}", e))?;
     let level = root.level;
 
     let mut sections: [Option<LegacySection>; 16] = Default::default();
@@ -124,14 +133,13 @@ pub fn from_bytes(data: &[u8]) -> Result<LegacyChunkData, String> {
 }
 
 fn decode_section(sec: SectionNbt) -> Result<Option<LegacySection>, String> {
-    let SectionNbt { y, blocks, data, palette } = sec;
+    let SectionNbt { y, blocks, add, data, palette } = sec;
 
     let blocks = match blocks {
         Some(b) if b.len() == SECTION_BLOCKS => b,
         Some(b) => return Err(format!("Blocks length {} (expected {})", b.len(), SECTION_BLOCKS)),
         // No Blocks at all: treat as all-air. Reasonable for legacy "section
-        // omitted" semantics, though REI always writes Blocks when Palette
-        // exists.
+        // omitted" semantics; REI always writes Blocks alongside Palette.
         None => return Ok(None),
     };
     let data = match data {
@@ -143,30 +151,47 @@ fn decode_section(sec: SectionNbt) -> Result<Option<LegacySection>, String> {
                 SECTION_BLOCKS / 2
             ));
         }
-        None => return Err("Section missing Data — required by REI format".into()),
-    };
-    let palette = match palette {
-        Some(p) => p,
-        None => return Err("Section missing Palette — not a REI chunk".into()),
+        None => return Err("Section missing Data".into()),
     };
 
     let mut ids = Box::new([0u16; SECTION_BLOCKS]);
     let mut metas = Box::new([0u16; SECTION_BLOCKS]);
 
-    let palette_len = palette.len();
-    for i in 0..SECTION_BLOCKS {
-        let hi = blocks[i] as u8 as u16;
-        let lo = nibble(&data[..], i) as u16;
-        let pidx = ((hi << 4) | lo) as usize;
-        if pidx >= palette_len {
-            // Out-of-range palette index — treat as air rather than panic.
-            // We've never seen this in practice, but a corrupt chunk is no
-            // reason to abort the whole region render.
-            continue;
+    match palette {
+        Some(palette) => {
+            // REI / JEID: 12-bit palette index packed across `Blocks` (high
+            // 8) + `Data` (low 4). Palette entry is `(block_id << 4) | meta`.
+            let palette_len = palette.len();
+            for i in 0..SECTION_BLOCKS {
+                let hi = blocks[i] as u8 as u16;
+                let lo = nibble(&data[..], i) as u16;
+                let pidx = ((hi << 4) | lo) as usize;
+                if pidx >= palette_len {
+                    // Out-of-range palette index — treat as air rather than
+                    // panic. A corrupt chunk is no reason to abort the whole
+                    // region render.
+                    continue;
+                }
+                let state = palette[pidx] as u32;
+                ids[i] = (state >> 4) as u16;
+                metas[i] = (state & 0xF) as u16;
+            }
         }
-        let state = palette[pidx] as u32;
-        ids[i] = (state >> 4) as u16;
-        metas[i] = (state & 0xF) as u16;
+        None => {
+            // Vanilla pre-REI: `Blocks` is the low 8 bits of the block ID,
+            // optional `Add` nibble is the high 4 bits, `Data` nibble is the
+            // 4-bit metadata.
+            let add_bytes = add.as_ref().map(|a| a.as_ref());
+            for i in 0..SECTION_BLOCKS {
+                let lo_id = blocks[i] as u8 as u16;
+                let hi_id = match add_bytes {
+                    Some(a) if a.len() == SECTION_BLOCKS / 2 => nibble(a, i) as u16,
+                    _ => 0,
+                };
+                ids[i] = (hi_id << 8) | lo_id;
+                metas[i] = nibble(&data[..], i) as u16;
+            }
+        }
     }
 
     Ok(Some(LegacySection { y, ids, metas }))

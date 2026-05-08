@@ -1,14 +1,29 @@
 // 1.13+ top-shade renderer. Implements `RenderEngine` by delegating to
-// fastanvil.
+// fastanvil's renderer, with our own `Palette` impl that overrides two cases
+// fastanvil gets wrong for modded servers:
+//
+//   1. Mod-defined air variants (`compactmachines:machine_void_air`,
+//      `botania:fake_air`, …) aren't in the palette, so fastanvil's `pick`
+//      returns its magenta `missing_colour` placeholder. The pixel comes out
+//      solid magenta. Treat any block whose name ends in `_air` (or `:air`
+//      for the namespace-only form) as transparent — those blocks are
+//      conceptually nothing.
+//   2. fastanvil hard-codes `minecraft:air` to opaque black `[0,0,0,255]`
+//      ("Occurs a lot for the end, as layer 0 will be air in the void.").
+//      That assumption was specific to the End; for the void / mod dims it
+//      produces a pure-black render where transparent would be more truthful.
+//
+// Both cases collapse to the same rule: any block whose name ends in `_air`
+// or `:air` is transparent. Everything else defers to fastanvil.
 
 use std::collections::HashMap;
 
 use super::chunk::{ChunkData, HeightMode};
 use crate::anvil::pipeline::{RenderEngine, Rgba};
 
-/// Modern palette: name → RGBA. Kept public for direct lookup in the analyze
-/// command; the per-chunk rendering path builds a `fastanvil::RenderedPalette`
-/// once up front (clone of the same map) so we don't allocate one per chunk.
+/// Modern palette: name → RGBA. Implements `fastanvil::Palette` directly so
+/// the per-chunk render path doesn't need a wrapper. The `blockstates` map
+/// stays public for direct lookup in the analyze command.
 pub struct RenderedPalette {
     pub blockstates: HashMap<String, Rgba>,
     fa_palette: fastanvil::RenderedPalette,
@@ -42,9 +57,21 @@ impl RenderedPalette {
             fa_palette,
         }
     }
+}
 
-    fn fastanvil_palette(&self) -> &fastanvil::RenderedPalette {
-        &self.fa_palette
+impl fastanvil::Palette for RenderedPalette {
+    fn pick(
+        &self,
+        block: &fastanvil::Block,
+        biome: Option<fastanvil::biome::Biome>,
+    ) -> Rgba {
+        // We deliberately don't broaden this to substrings like `void` —
+        // `theabyss:black_void` is a real solid block, not a hole.
+        let name = block.name();
+        if name.ends_with("_air") || name.ends_with(":air") {
+            return [0, 0, 0, 0];
+        }
+        self.fa_palette.pick(block, biome)
     }
 }
 
@@ -76,7 +103,7 @@ impl<'a> RenderEngine for TopShadeRenderer<'a> {
         north: Option<&ChunkData>,
     ) -> [Rgba; 16 * 16] {
         let fa_renderer =
-            fastanvil::TopShadeRenderer::new(self.palette.fastanvil_palette(), self.height_mode);
+            fastanvil::TopShadeRenderer::new(self.palette, self.height_mode);
         fa_renderer.render(chunk, north)
     }
 }

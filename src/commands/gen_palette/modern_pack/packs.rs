@@ -6,7 +6,7 @@ use std::io::{Cursor, Read, Seek};
 use std::path::{Path, PathBuf};
 use zip::ZipArchive;
 
-use super::raw::{RawBlockstate, RawModel, parse_blockstate_lenient};
+use super::raw::{RawBlockstate, RawModel, parse_blockstate_lenient, scrub_extension_keys};
 use crate::commands::gen_palette::shared::progress::PackLoadReport;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -155,7 +155,15 @@ fn load_archive_from_reader<R: Read + Seek>(
                     debug!("Failed to read {}: {}", name, e);
                     continue;
                 }
-                match serde_json::from_slice::<Blockstate>(&buf) {
+                // Mod-extension siblings of `variants` / `multipart` (see
+                // `scrub_extension_keys`) break externally-tagged enum
+                // deserialization for both the strict and lenient parsers.
+                // Scrub them once; both parsers see the cleaned bytes.
+                let parse_buf: std::borrow::Cow<[u8]> = match scrub_extension_keys(&buf) {
+                    Some(cleaned) => std::borrow::Cow::Owned(cleaned),
+                    None => std::borrow::Cow::Borrowed(buf.as_slice()),
+                };
+                match serde_json::from_slice::<Blockstate>(&parse_buf) {
                     Ok(bs) => {
                         pools.blockstates.insert(key.clone(), bs);
                         bs_added += 1;
@@ -167,7 +175,7 @@ fn load_archive_from_reader<R: Read + Seek>(
                 // `{forge_marker: 1, defaults, variants}` shape. Most 1.12.2
                 // mods ship the latter; falling through here is what makes
                 // those blocks resolvable beyond bare-id gray.
-                if let Some(raw) = parse_blockstate_lenient(&buf) {
+                if let Some(raw) = parse_blockstate_lenient(&parse_buf) {
                     pools.raw_blockstates.insert(key, raw);
                 }
             }
