@@ -35,7 +35,8 @@ enum Commands {
     /// Analyze blocks in region files and find unknown blocks. 1.13+ only.
     Analyze(commands::analyze::AnalyzeArgs),
 
-    /// Generate palette.json — pick a version subcommand for the world type.
+    /// Generate palette.json — variant (1.7.10 / Forge 1.12.2 / 1.13+) is
+    /// auto-detected from the world's level.dat.
     GenPalette(commands::gen_palette::GenPaletteArgs),
 
     /// Download the Minecraft client jar for a given version from Mojang.

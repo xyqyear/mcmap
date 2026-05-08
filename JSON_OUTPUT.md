@@ -5,7 +5,7 @@
 
 ```bash
 mcmap --json render -r /world/region -p palette.json -o map.png
-mcmap --json gen-palette modern -p 1.20.1.jar -o palette.json
+mcmap --json gen-palette -p 1.20.1.jar -o palette.json
 ```
 
 ## General shape
@@ -179,10 +179,12 @@ Downloads a Minecraft client `.jar` from Mojang's piston-meta.
 
 ## `gen-palette`
 
-All three subcommands (`modern`, `legacy`, `forge112`) share the same event
-skeleton but differ in which events they emit and in the shape of `counters`.
+One command, three internal modes (`modern` / `legacy` / `forge112`). The
+mode is auto-detected from `--level-dat` (or its absence). All three modes
+share the same event skeleton but differ in which events they emit and in
+the shape of `counters`.
 
-### Common events (all three)
+### Common events (all modes)
 
 `progress` phases:
 
@@ -191,7 +193,7 @@ skeleton but differ in which events they emit and in the shape of `counters`.
 | `registry_loaded`   | `legacy`/`forge112` only. `blocks` (usize); `legacy` also carries `items` (usize). |
 | `pack_loaded`       | `path` (string); `index` (usize, 1-based) and `total` (usize) — current pack position and total number of top-level packs discovered, so each event is self-contained for "N of M" progress rendering; `blockstates_added`, `models_added`, `textures_added` (usize); `error` (string, optional — present when the archive failed to load, in which case the added-counts are zero). One event per input pack in the order they were provided. Nested Forge jarjar entries do **not** produce their own events — their contributions are folded into the parent's added-counts — so `total` reflects top-level archives only. For `legacy`, `blockstates_added` and `models_added` are always `0` because 1.7.10 packs don't ship those JSONs. |
 | `packs_done`        | `pack_count` (usize) and totals. `modern`/`forge112`: `blockstates`, `models`, `textures`. `legacy`: `textures` only. |
-| `resolved`          | `counters` — shape depends on subcommand (see below). `modern` also carries `failed` (usize). |
+| `resolved`          | `counters` — shape depends on detected mode (see below). `modern` also carries `failed` (usize). |
 | `overrides_applied` | `count` (usize). Only emitted when `--overrides` was passed.              |
 
 ### `result` event
@@ -258,7 +260,7 @@ curated table for vanilla, so it reports **both** sets, nested:
 }
 ```
 
-### Example (`gen-palette modern`)
+### Example (modern variant)
 
 ```json
 {"type":"progress","phase":"pack_loaded","path":"./create-0.5.jar","index":1,"total":2,"blockstates_added":412,"models_added":910,"textures_added":688}

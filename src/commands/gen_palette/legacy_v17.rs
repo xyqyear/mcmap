@@ -1,8 +1,7 @@
-// `gen-palette legacy` — palette generation for pre-1.13 worlds (1.7.10,
-// optionally with NotEnoughIDs).
+// `gen-palette` for pre-1.13 worlds (1.7.10, optionally with NotEnoughIDs).
 //
-// The modern gen-palette walks blockstate/model/texture JSONs. 1.7.10 has
-// none of those — block rendering is all hard-coded in Java. Instead we:
+// 1.7.10 has no blockstate/model JSONs — block rendering is hard-coded in
+// Java. Instead we:
 //
 //   1. Parse `level.dat` → FML `ItemData` registry → `{id: "ns:name"}`.
 //   2. For each block, locate a reasonable texture in the supplied jars:
@@ -17,49 +16,23 @@
 //   5. Emit a JSON palette wrapped with `"format": "1.7.10"` so the renderer
 //      can distinguish it from the modern flat-map palette.
 
-mod leveldat;
-
-use clap::Args;
 use log::{debug, info};
 use serde::Serialize;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::legacy_pack::{MatchKind, ResolveStats, TexturePack, load_texture_packs, resolve_modded};
+use super::leveldat::{FmlRegistry17, load_fml_registry_v17};
 use super::shared::color::avg_colour;
+use super::shared::output::PaletteOutput;
 use super::shared::overrides::{apply_overrides, load_overrides};
 use super::shared::progress::PackLoadReport;
 use super::shared::vanilla_1x;
 use crate::anvil::legacy::palette::LegacyPaletteFile;
 use crate::anvil::palette::Rgba;
-use crate::chown;
 use crate::output::emit_if_json;
-use leveldat::{FmlRegistry, load_fml_registry};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-
-#[derive(Args, Debug)]
-pub struct LegacyArgs {
-    /// Path to the world's `level.dat`. The FML block registry inside it
-    /// defines the (id → name) mapping the palette is keyed by.
-    #[arg(short, long)]
-    level_dat: PathBuf,
-
-    /// Resource pack: a .jar/.zip file or a directory containing them.
-    /// Repeatable — first-listed wins on filename conflicts (list custom
-    /// resource packs first, vanilla last).
-    #[arg(short, long, required = true)]
-    pack: Vec<PathBuf>,
-
-    /// Output palette.json file path.
-    #[arg(short, long, default_value = "palette.json")]
-    output: PathBuf,
-
-    /// Optional user overrides — JSON map of `"id"` or `"id|meta"` →
-    /// `[r,g,b,a]`. Applied last, takes precedence over everything automatic.
-    #[arg(long)]
-    overrides: Option<PathBuf>,
-}
 
 const FALLBACK_GRAY: Rgba = [128, 128, 128, 255];
 
@@ -144,19 +117,24 @@ struct ResultEvent<'a> {
     counters: LegacyCounters,
 }
 
-pub fn execute(args: LegacyArgs) -> Result<()> {
+pub fn run_legacy_v17(
+    packs: &[PathBuf],
+    level_dat: &Path,
+    output: &Path,
+    overrides: Option<&Path>,
+) -> Result<()> {
     info!("Starting legacy palette generation (1.7.10)");
-    info!("Level.dat: {}", args.level_dat.display());
-    info!("Packs ({}):", args.pack.len());
-    for p in &args.pack {
+    info!("Level.dat: {}", level_dat.display());
+    info!("Packs ({}):", packs.len());
+    for p in packs {
         info!("  - {}", p.display());
     }
-    if let Some(ref o) = args.overrides {
+    if let Some(o) = overrides {
         info!("Overrides: {}", o.display());
     }
-    info!("Output: {}", args.output.display());
+    info!("Output: {}", output.display());
 
-    let registry: FmlRegistry = load_fml_registry(&args.level_dat)?;
+    let registry: FmlRegistry17 = load_fml_registry_v17(level_dat)?;
     info!(
         "FML registry: {} blocks, {} items",
         registry.blocks.len(),
@@ -169,7 +147,7 @@ pub fn execute(args: LegacyArgs) -> Result<()> {
         items: registry.items.len(),
     });
 
-    let packs = load_texture_packs(&args.pack, |report: &PackLoadReport| {
+    let texture_packs = load_texture_packs(packs, |report: &PackLoadReport| {
         emit_if_json(&PackLoadedEvent {
             ty: "progress",
             phase: "pack_loaded",
@@ -182,16 +160,16 @@ pub fn execute(args: LegacyArgs) -> Result<()> {
             error: report.error.as_deref(),
         });
     })?;
-    let total_textures: usize = packs.iter().map(|p| p.textures.len()).sum();
+    let total_textures: usize = texture_packs.iter().map(|p| p.textures.len()).sum();
     info!(
         "Loaded {} texture pack(s), {} total textures",
-        packs.len(),
+        texture_packs.len(),
         total_textures
     );
     emit_if_json(&PacksDoneEvent {
         ty: "progress",
         phase: "packs_done",
-        pack_count: packs.len(),
+        pack_count: texture_packs.len(),
         textures: total_textures,
     });
 
@@ -209,9 +187,9 @@ pub fn execute(args: LegacyArgs) -> Result<()> {
         }
         if let Some((ns, local)) = name.split_once(':') {
             if ns == "minecraft" {
-                emit_vanilla_block(id, local, &packs, &mut palette, &mut stats);
+                emit_vanilla_block(id, local, &texture_packs, &mut palette, &mut stats);
             } else {
-                emit_modded_block(id, ns, local, &packs, &mut palette, &mut stats);
+                emit_modded_block(id, ns, local, &texture_packs, &mut palette, &mut stats);
             }
             id_to_name.insert(id, name.to_string());
         } else {
@@ -229,9 +207,9 @@ pub fn execute(args: LegacyArgs) -> Result<()> {
         counters,
     });
 
-    if let Some(ref path) = args.overrides {
-        let overrides = load_overrides(path)?;
-        let n = apply_overrides(&mut palette, overrides);
+    if let Some(path) = overrides {
+        let overrides_map = load_overrides(path)?;
+        let n = apply_overrides(&mut palette, overrides_map);
         info!("Applied {} override entries", n);
         emit_if_json(&OverridesAppliedEvent {
             ty: "progress",
@@ -254,19 +232,17 @@ pub fn execute(args: LegacyArgs) -> Result<()> {
         format: "1.7.10".to_string(),
         blocks: palette,
     };
-    let bytes = serde_json::to_vec_pretty(&file)?;
-    std::fs::write(&args.output, &bytes)?;
-    chown::apply(&args.output)
-        .map_err(|e| format!("Failed to chown {}: {}", args.output.display(), e))?;
+    let out = PaletteOutput::Legacy(&file);
+    out.write_to(output)?;
     info!(
         "Legacy palette generation complete — {} entries written to {}",
-        file.blocks.len(),
-        args.output.display()
+        out.entry_count(),
+        output.display()
     );
     emit_if_json(&ResultEvent {
         ty: "result",
-        output: args.output.display().to_string(),
-        entries: file.blocks.len(),
+        output: output.display().to_string(),
+        entries: out.entry_count(),
         counters,
     });
 

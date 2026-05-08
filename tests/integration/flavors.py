@@ -34,7 +34,7 @@ class Flavor:
     mods: list[ModSpec] = field(default_factory=list)
     level_type: str = "FLAT"      # FLAT for legacy, "minecraft:flat" for modern
     generator_settings: str = ""  # legacy semicolon format; empty for modern
-    palette_format: str = "modern"  # "modern" / "legacy" / "forge112" — picks gen-palette subcommand
+    palette_format: str = "modern"  # "modern" / "legacy" / "forge112" — describes expected output shape (variant is auto-detected from level.dat)
 
 
 def build_flavors() -> list[Flavor]:

@@ -59,7 +59,7 @@ def palette_for(flavor: Flavor, run_root: Path) -> Path:
     if flavor.palette_format == "modern":
         client_jar = _client_jar_for(flavor, run_root)
         events, rc = run_mcmap_json([
-            "gen-palette", "modern",
+            "gen-palette",
             "-p", str(client_jar),
             "-o", str(out),
         ])
@@ -69,33 +69,27 @@ def palette_for(flavor: Flavor, run_root: Path) -> Path:
         return out
 
     # legacy / forge112: need a level.dat from this flavor's world plus the
-    # client jar of the same MC version (and the mod jars for forge112).
+    # client jar of the same MC version (and the mod jars for forge112). The
+    # variant is auto-detected from the level.dat — same flat command as
+    # modern, just with --level-dat.
     base_dir = run_root / "palette-base" / flavor.id
     base_dir.mkdir(parents=True, exist_ok=True)
     world = _bootstrap_world(flavor, base_dir)
     client_jar = _client_jar_for(flavor, run_root)
 
-    args: list[str]
-    if flavor.palette_format == "legacy":
-        args = [
-            "gen-palette", "legacy",
-            "--level-dat", str(world / "level.dat"),
-            "--pack", str(client_jar),
-            "-o", str(out),
-        ]
-    elif flavor.palette_format == "forge112":
-        args = [
-            "gen-palette", "forge112",
-            "--level-dat", str(world / "level.dat"),
-            "--pack", str(client_jar),
-            "-o", str(out),
-        ]
+    args: list[str] = [
+        "gen-palette",
+        "--level-dat", str(world / "level.dat"),
+        "--pack", str(client_jar),
+        "-o", str(out),
+    ]
+    if flavor.palette_format == "forge112":
         # Add mod jars from the bootstrapped server's mods/ dir.
         mods_dir = base_dir / "mods"
         if mods_dir.is_dir():
             for jar in sorted(mods_dir.glob("*.jar")):
                 args.extend(["--pack", str(jar)])
-    else:
+    elif flavor.palette_format != "legacy":
         raise RuntimeError(f"unknown palette_format: {flavor.palette_format}")
 
     events, rc = run_mcmap_json(args)

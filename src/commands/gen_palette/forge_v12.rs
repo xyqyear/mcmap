@@ -1,5 +1,4 @@
-// `gen-palette forge112` — palette generation for Forge 1.12.2 worlds running
-// RoughlyEnoughIDs / JustEnoughIDs.
+// `gen-palette` for Forge 1.12.2 worlds running RoughlyEnoughIDs / JEID.
 //
 // 1.12.2 mods ship proper `assets/<ns>/blockstates/` and `models/` JSONs, so
 // modded block resolution reuses the modern blockstate-aware resolver from
@@ -10,8 +9,8 @@
 //
 // Pipeline:
 //
-//   1. Read `level.dat` → modern `FML.Registries.minecraft:blocks.ids`
-//      compound → `{ numeric_id: "namespace:name" }`.
+//   1. Read `level.dat` → modern `FML.Registries.minecraft:blocks` compound
+//      → `{ numeric_id: "namespace:name" }`.
 //   2. For each block:
 //      - Vanilla in the curated table → emit one `id|meta` per variant
 //        (probing both `block/` and `blocks/` texture-key forms).
@@ -21,52 +20,24 @@
 //      (water/lava/air) keyed by registered name.
 //   4. Apply user overrides and write `format = "1.12.2"` palette JSON.
 
-mod leveldat;
-
-use clap::Args;
 use fastanvil::tex::{Blockstate, Renderer};
 use log::{debug, info};
 use serde::Serialize;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use super::leveldat::load_fml_registry_v12;
 use super::modern_pack::{Counters, Resolver, default_regex_mappings, load_packs};
 use super::shared::color::avg_colour;
+use super::shared::output::PaletteOutput;
 use super::shared::overrides::{apply_overrides, load_overrides};
 use super::shared::progress::PackLoadReport;
 use super::shared::vanilla_1x;
 use crate::anvil::legacy::palette::LegacyPaletteFile;
 use crate::anvil::palette::Rgba;
-use crate::chown;
 use crate::output::emit_if_json;
-use leveldat::load_fml_registry;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-
-#[derive(Args, Debug)]
-pub struct Forge112Args {
-    /// Path to the world's `level.dat`. The modern FML block registry inside
-    /// it (`FML.Registries.minecraft:blocks.ids`) defines the numeric block
-    /// id ↔ name mapping the palette is keyed by.
-    #[arg(short, long)]
-    level_dat: PathBuf,
-
-    /// Resource pack: a .jar/.zip file or a directory containing them.
-    /// Repeatable — first-listed wins on conflicts (custom packs first,
-    /// vanilla last). Mods are loaded the same way as resource packs;
-    /// blockstate / model JSONs inside the jar are honored.
-    #[arg(short, long, required = true)]
-    pack: Vec<PathBuf>,
-
-    /// Output palette.json file path.
-    #[arg(short, long, default_value = "palette.json")]
-    output: PathBuf,
-
-    /// Optional user overrides — JSON map of `"id"` or `"id|meta"` →
-    /// `[r,g,b,a]`. Applied last, takes precedence over everything automatic.
-    #[arg(long)]
-    overrides: Option<PathBuf>,
-}
 
 #[derive(Default, Debug)]
 struct Stats {
@@ -189,19 +160,24 @@ struct ResultEvent<'a> {
     counters: Forge112Counters,
 }
 
-pub fn execute(args: Forge112Args) -> Result<()> {
+pub fn run_forge_v12(
+    packs: &[PathBuf],
+    level_dat: &Path,
+    output: &Path,
+    overrides: Option<&Path>,
+) -> Result<()> {
     info!("Starting palette generation (Forge 1.12.2 / REI)");
-    info!("Level.dat: {}", args.level_dat.display());
-    info!("Packs ({}):", args.pack.len());
-    for p in &args.pack {
+    info!("Level.dat: {}", level_dat.display());
+    info!("Packs ({}):", packs.len());
+    for p in packs {
         info!("  - {}", p.display());
     }
-    if let Some(ref o) = args.overrides {
+    if let Some(o) = overrides {
         info!("Overrides: {}", o.display());
     }
-    info!("Output: {}", args.output.display());
+    info!("Output: {}", output.display());
 
-    let registry = load_fml_registry(&args.level_dat)?;
+    let registry = load_fml_registry_v12(level_dat)?;
     info!("FML registry: {} blocks", registry.blocks.len());
     emit_if_json(&RegistryLoadedEvent {
         ty: "progress",
@@ -209,7 +185,7 @@ pub fn execute(args: Forge112Args) -> Result<()> {
         blocks: registry.blocks.len(),
     });
 
-    let pools = load_packs(&args.pack, |report: &PackLoadReport| {
+    let pools = load_packs(packs, |report: &PackLoadReport| {
         emit_if_json(&PackLoadedEvent {
             ty: "progress",
             phase: "pack_loaded",
@@ -225,7 +201,7 @@ pub fn execute(args: Forge112Args) -> Result<()> {
     emit_if_json(&PacksDoneEvent {
         ty: "progress",
         phase: "packs_done",
-        pack_count: args.pack.len(),
+        pack_count: packs.len(),
         blockstates: pools.blockstates.len(),
         models: pools.models.len(),
         textures: pools.textures.len(),
@@ -330,9 +306,9 @@ pub fn execute(args: Forge112Args) -> Result<()> {
         counters: forge_counters,
     });
 
-    if let Some(ref path) = args.overrides {
-        let overrides = load_overrides(path)?;
-        let n = apply_overrides(&mut palette, overrides);
+    if let Some(path) = overrides {
+        let overrides_map = load_overrides(path)?;
+        let n = apply_overrides(&mut palette, overrides_map);
         info!("Applied {} override entries", n);
         emit_if_json(&OverridesAppliedEvent {
             ty: "progress",
@@ -361,19 +337,17 @@ pub fn execute(args: Forge112Args) -> Result<()> {
         format: "1.12.2".to_string(),
         blocks: palette,
     };
-    let bytes = serde_json::to_vec_pretty(&file)?;
-    std::fs::write(&args.output, &bytes)?;
-    chown::apply(&args.output)
-        .map_err(|e| format!("Failed to chown {}: {}", args.output.display(), e))?;
+    let out = PaletteOutput::Legacy(&file);
+    out.write_to(output)?;
     info!(
         "Forge 1.12.2 palette generation complete — {} entries written to {}",
-        file.blocks.len(),
-        args.output.display()
+        out.entry_count(),
+        output.display()
     );
     emit_if_json(&ResultEvent {
         ty: "result",
-        output: args.output.display().to_string(),
-        entries: file.blocks.len(),
+        output: output.display().to_string(),
+        entries: out.entry_count(),
         counters: forge_counters,
     });
 

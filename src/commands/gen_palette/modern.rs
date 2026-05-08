@@ -1,11 +1,10 @@
-// `gen-palette modern` — palette generation for 1.13+ worlds.
+// `gen-palette` for 1.13+ worlds.
 //
 // Walks standard blockstate/model/texture JSONs across every supplied resource
 // pack (vanilla and modded are treated identically; namespace is derived from
 // the on-disk path). Resolution tiers are listed at the top of
 // `modern_pack/mod.rs`.
 
-use clap::Args;
 use fastanvil::{
     Rgba,
     tex::{Blockstate, Renderer, Texture},
@@ -13,37 +12,19 @@ use fastanvil::{
 use log::{info, warn};
 use serde::Serialize;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::modern_pack::raw::RawBlockstate;
 use super::modern_pack::{
     Counters, Pools, Resolver, add_base_colors, add_missing_blocks, default_regex_mappings,
     load_packs,
 };
+use super::shared::output::PaletteOutput;
 use super::shared::overrides::{apply_overrides, load_overrides};
 use super::shared::progress::PackLoadReport;
-use crate::chown;
 use crate::output::emit_if_json;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
-
-#[derive(Args, Debug)]
-pub struct ModernArgs {
-    /// Resource pack to load: a .jar/.zip file, or a directory containing
-    /// .jar/.zip files at depth 1. Repeatable; first-listed wins on conflict
-    /// (list user packs first, vanilla last).
-    #[arg(short, long, required = true)]
-    pack: Vec<PathBuf>,
-
-    /// Output palette.json file path
-    #[arg(short, long, default_value = "palette.json")]
-    output: PathBuf,
-
-    /// Optional user overrides file. JSON map of `"namespace:id"` →
-    /// `[r,g,b,a]`. Applied last — overrides everything automatic.
-    #[arg(long)]
-    overrides: Option<PathBuf>,
-}
 
 #[derive(Serialize)]
 struct PackLoadedEvent<'a> {
@@ -125,18 +106,22 @@ impl From<&Counters> for ResolverCounters {
     }
 }
 
-pub fn execute(args: ModernArgs) -> Result<()> {
+pub fn run_modern(
+    packs: &[PathBuf],
+    output: &Path,
+    overrides: Option<&Path>,
+) -> Result<()> {
     info!("Starting palette generation (modern / 1.13+)");
-    info!("Packs ({}):", args.pack.len());
-    for p in &args.pack {
+    info!("Packs ({}):", packs.len());
+    for p in packs {
         info!("  - {}", p.display());
     }
-    if let Some(ref o) = args.overrides {
+    if let Some(o) = overrides {
         info!("Overrides: {}", o.display());
     }
-    info!("Output: {}", args.output.display());
+    info!("Output: {}", output.display());
 
-    let pools = load_packs(&args.pack, |report: &PackLoadReport| {
+    let pools = load_packs(packs, |report: &PackLoadReport| {
         emit_if_json(&PackLoadedEvent {
             ty: "progress",
             phase: "pack_loaded",
@@ -152,7 +137,7 @@ pub fn execute(args: ModernArgs) -> Result<()> {
     emit_if_json(&PacksDoneEvent {
         ty: "progress",
         phase: "packs_done",
-        pack_count: args.pack.len(),
+        pack_count: packs.len(),
         blockstates: pools.blockstates.len(),
         models: pools.models.len(),
         textures: pools.textures.len(),
@@ -225,10 +210,10 @@ pub fn execute(args: ModernArgs) -> Result<()> {
     add_missing_blocks(&mut palette);
     add_base_colors(&mut palette);
 
-    if let Some(ref path) = args.overrides {
+    if let Some(path) = overrides {
         info!("Applying overrides from {}", path.display());
-        let overrides = load_overrides(path)?;
-        let n = apply_overrides(&mut palette, overrides);
+        let overrides_map = load_overrides(path)?;
+        let n = apply_overrides(&mut palette, overrides_map);
         info!("  Applied {} override entries", n);
         emit_if_json(&OverridesAppliedEvent {
             ty: "progress",
@@ -237,20 +222,18 @@ pub fn execute(args: ModernArgs) -> Result<()> {
         });
     }
 
-    info!("Writing palette to: {}", args.output.display());
-    let file = std::fs::File::create(&args.output)?;
-    serde_json::to_writer_pretty(file, &palette)?;
-    chown::apply(&args.output)
-        .map_err(|e| format!("Failed to chown {}: {}", args.output.display(), e))?;
+    info!("Writing palette to: {}", output.display());
+    let out = PaletteOutput::Modern(&palette);
+    out.write_to(output)?;
 
     info!(
         "Palette generation complete — {} total blocks written",
-        palette.len()
+        out.entry_count()
     );
     emit_if_json(&ResultEvent {
         ty: "result",
-        output: args.output.display().to_string(),
-        entries: palette.len(),
+        output: output.display().to_string(),
+        entries: out.entry_count(),
         failed,
         counters: resolver_counters,
     });

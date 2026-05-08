@@ -41,7 +41,7 @@ def test_gen_palette_against_flavor(work_dir: Path, _flavor: Flavor) -> None:
     if _flavor.palette_format == "modern":
         client_jar = _client_jar_for(_flavor, work_dir)
         events, rc = run_mcmap_json([
-            "gen-palette", "modern",
+            "gen-palette",
             "-p", str(client_jar),
             "-o", str(out),
         ])
@@ -82,7 +82,7 @@ def test_gen_palette_against_flavor(work_dir: Path, _flavor: Flavor) -> None:
     client_jar = _client_jar_for(_flavor, work_dir)
 
     args = [
-        "gen-palette", _flavor.palette_format,
+        "gen-palette",
         "--level-dat", str(level_dat),
         "--pack", str(client_jar),
         "-o", str(out),
@@ -154,7 +154,7 @@ def test_gen_palette_overrides_take_precedence(work_dir: Path, _flavor: Flavor) 
         overrides.write_text(json.dumps({"minecraft:gold_block": pink}))
         client_jar = _client_jar_for(_flavor, work_dir)
         events, rc = run_mcmap_json([
-            "gen-palette", "modern",
+            "gen-palette",
             "-p", str(client_jar),
             "-o", str(out),
             "--overrides", str(overrides),
@@ -181,7 +181,7 @@ def test_gen_palette_overrides_take_precedence(work_dir: Path, _flavor: Flavor) 
 
     client_jar = _client_jar_for(_flavor, work_dir)
     args = [
-        "gen-palette", _flavor.palette_format,
+        "gen-palette",
         "--level-dat", str(level_dat),
         "--pack", str(client_jar),
         "-o", str(out),
