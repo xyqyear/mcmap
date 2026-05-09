@@ -1,6 +1,6 @@
 use fastanvil::tex::{Blockstate, Model, Texture};
 use log::{debug, error, info, warn};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{Cursor, Read, Seek};
 use std::path::{Path, PathBuf};
@@ -305,5 +305,135 @@ pub fn load_packs<F: FnMut(&PackLoadReport)>(
         pools.textures.len(),
         archives.len()
     );
+
+    break_model_parent_cycles(&mut pools.models);
+
     Ok(pools)
+}
+
+/// Walk each model's `parent` chain, snipping the edge that closes a cycle.
+///
+/// fastanvil 0.32's `Renderer::flatten_model` walks `parent` without cycle
+/// detection, so any model whose parent chain loops back on itself causes
+/// `Renderer::get_top` to spin forever. Real-world example:
+/// `vscontrolcraft:block/propeller_controller/block` ships with
+/// `"parent": "vscontrolcraft:block/propeller_controller/block"` — a self-
+/// reference. After this pass, fastanvil sees a cycle-free graph; the offending
+/// model still resolves via its own `elements` (which the snipped parent edge
+/// would have inherited identically anyway).
+///
+/// Resolution mirrors fastanvil's `get_model`: try the parent string as-is,
+/// then with a `minecraft:` prefix. Missing parents are left alone — fastanvil
+/// surfaces them as `MissingModel` at render time.
+fn break_model_parent_cycles(models: &mut HashMap<String, Model>) {
+    let keys: Vec<String> = models.keys().cloned().collect();
+    let mut snipped = 0usize;
+    for start in keys {
+        let mut current = start;
+        let mut seen: HashSet<String> = HashSet::new();
+        loop {
+            if !seen.insert(current.clone()) {
+                break;
+            }
+            let parent_raw = match models.get(&current).and_then(|m| m.parent.as_ref()) {
+                Some(p) => p.clone(),
+                None => break,
+            };
+            let parent_key = if models.contains_key(&parent_raw) {
+                parent_raw.clone()
+            } else {
+                let mc = format!("minecraft:{}", parent_raw);
+                if models.contains_key(&mc) {
+                    mc
+                } else {
+                    break;
+                }
+            };
+            if seen.contains(&parent_key) {
+                if let Some(m) = models.get_mut(&current) {
+                    m.parent = None;
+                }
+                warn!(
+                    "Snipped cyclic parent on model {} (chain re-entered {})",
+                    current, parent_key
+                );
+                snipped += 1;
+                break;
+            }
+            current = parent_key;
+        }
+    }
+    if snipped > 0 {
+        info!("Broke {} cyclic model parent chain(s)", snipped);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fastanvil::tex::Model;
+
+    fn empty_model(parent: Option<&str>) -> Model {
+        Model {
+            parent: parent.map(|s| s.to_string()),
+            textures: None,
+            elements: None,
+        }
+    }
+
+    #[test]
+    fn snips_self_cycle() {
+        let mut models = HashMap::new();
+        models.insert(
+            "ns:block/self".to_string(),
+            empty_model(Some("ns:block/self")),
+        );
+        break_model_parent_cycles(&mut models);
+        assert_eq!(models["ns:block/self"].parent, None);
+    }
+
+    #[test]
+    fn snips_two_step_cycle() {
+        let mut models = HashMap::new();
+        models.insert("ns:block/a".to_string(), empty_model(Some("ns:block/b")));
+        models.insert("ns:block/b".to_string(), empty_model(Some("ns:block/a")));
+        break_model_parent_cycles(&mut models);
+        // Whichever node was visited second gets its parent snipped — exactly
+        // one of the two edges should be broken so the chain terminates.
+        let a_parent = models["ns:block/a"].parent.as_deref();
+        let b_parent = models["ns:block/b"].parent.as_deref();
+        assert!(
+            (a_parent.is_none() && b_parent == Some("ns:block/a"))
+                || (b_parent.is_none() && a_parent == Some("ns:block/b")),
+            "expected one edge snipped, got a={:?} b={:?}",
+            a_parent,
+            b_parent
+        );
+    }
+
+    #[test]
+    fn leaves_clean_chain_alone() {
+        let mut models = HashMap::new();
+        models.insert("ns:block/leaf".to_string(), empty_model(Some("ns:block/mid")));
+        models.insert("ns:block/mid".to_string(), empty_model(Some("ns:block/root")));
+        models.insert("ns:block/root".to_string(), empty_model(None));
+        break_model_parent_cycles(&mut models);
+        assert_eq!(models["ns:block/leaf"].parent.as_deref(), Some("ns:block/mid"));
+        assert_eq!(models["ns:block/mid"].parent.as_deref(), Some("ns:block/root"));
+        assert_eq!(models["ns:block/root"].parent, None);
+    }
+
+    #[test]
+    fn resolves_minecraft_prefix_fallback() {
+        // Vanilla parents are often written as bare `block/cube_all`; fastanvil's
+        // `get_model` prepends `minecraft:` when the bare key misses. The cycle
+        // walker has to mirror that or it misses cycles that span the gap.
+        let mut models = HashMap::new();
+        models.insert(
+            "minecraft:block/cube_all".to_string(),
+            empty_model(Some("block/cube_all")),
+        );
+        break_model_parent_cycles(&mut models);
+        assert_eq!(models["minecraft:block/cube_all"].parent, None);
+    }
 }
