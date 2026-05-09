@@ -329,6 +329,35 @@ Per-chunk events (one per coord in `--chunks`, in input order):
 {"type":"result","removed":2}
 ```
 
+## `extract-ftb-claims`
+
+Extracts FTB chunk-claim data from a server world directory and emits a
+unified JSON document. The full extraction payload is embedded in the
+terminal `result` event so a `--json` consumer can read everything off the
+event stream without also parsing a side file.
+
+### Event types
+
+No `progress` events — extraction is short and synchronous; the entire
+result lands in one event at the end.
+
+`result` event:
+
+| Field             | Description                                                                                                      |
+|-------------------|------------------------------------------------------------------------------------------------------------------|
+| `detected_format` | One of `snbt`, `per_team_nbt`, `universe_dat`, `latmod_json` (whichever was used; if `--format auto` was passed, this is what auto-detect picked). |
+| `teams`           | Number of teams in the output (count of `data.teams`).                                                           |
+| `claims`          | Total number of claims across all teams.                                                                         |
+| `dimensions`      | Number of unique dimensions seen in claim data (count of `data.dimensions`).                                     |
+| `output`          | Absent unless `--output` was passed. The destination file path the JSON was also written to.                     |
+| `data`            | The full extraction payload — the same object that gets written to `--output` (or stdout in non-JSON mode). See [`docs/extract_ftb_claims.md`](./docs/extract_ftb_claims.md#5-output-schema) for the schema. |
+
+### Example
+
+```json
+{"type":"result","detected_format":"snbt","teams":12,"claims":225,"dimensions":4,"output":"./claims.json","data":{"mcmap_extract_ftb_claims_version":1,"detected_format":"snbt","world_dir":"/srv/atm9/world","dimensions":[{"id":"minecraft:overworld","folder":".","exists":true}],"teams":[{"id":"...","type":"player","members":[],"claims":[{"dim":"minecraft:overworld","cx":4,"cz":-7,"force_loaded":false}]}]}}
+```
+
 ## Error event
 
 Any failure after argument parsing terminates the stream with:

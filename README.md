@@ -248,6 +248,35 @@ done
 
 Atomicity ordering on the target side: new `.mcc` files are written via `<file>.tmp` + rename, then the target `.mca` is atomic-renamed, then stale `.mcc` files are deleted. At no point does the on-disk state contain a stub record without its `.mcc`. See [`docs/replace_chunks.md`](./docs/replace_chunks.md) for the format spec, behavior matrix, and atomicity argument.
 
+### `extract-ftb-claims` - Extract FTB chunk-claim data
+
+Reads FTB Utilities / FTB Chunks claim data out of a server world directory and emits a unified JSON document with teams, members, claims, and the on-disk dim folder for each claimed dimension. Designed to feed map-overlay tooling — every claim references a dim id that joins to a `dimensions[]` lookup table giving the parent of `region/`.
+
+Auto-detects four FTB on-disk formats (override with `--format`):
+
+- `snbt` — 1.16+ FTB Chunks/Teams (plain SNBT files under `ftbchunks/` + `ftbteams/`)
+- `per-team-nbt` — 1.7.10 GTNH ServerUtilities + 1.12.2 FTB Utilities (gzipped NBT, one file per team)
+- `universe-dat` — 1.10.2 FTB Utilities 3.x (single packed `data/ftb_lib/universe.dat`)
+- `latmod-json` — 1.7.10 upstream FTBU (`LatMod/ClaimedChunks.json`)
+
+For pre-1.13 dim ids, the resolver tries `DIM<N>/region/` first and then probes for mod-renamed folders (`DIM_MOTHERSHIP<N>`, `PERSONAL_DIM_<N>`, `UW_GARDEN_<N>`, `DIM_MYST<N>`, etc.) so claims map to the correct overlay even on Galacticraft / Dimensional Doors / Mystcraft worlds.
+
+```bash
+# Modern 1.16+ world, auto-detect, pretty JSON to stdout
+mcmap extract-ftb-claims --world /opt/srv/atm9/world
+
+# Write to a file instead of stdout
+mcmap extract-ftb-claims --world /opt/srv/atm9/world -o claims.json
+
+# Mixed-layout 1.7.10 world: force the legacy LatMod reader
+mcmap extract-ftb-claims --world /opt/srv/gtnh/world --format latmod-json -o legacy.json
+
+# NDJSON event stream (the full data is embedded in the result event)
+mcmap --json extract-ftb-claims --world /opt/srv/atm9/world
+```
+
+See [`docs/extract_ftb_claims.md`](./docs/extract_ftb_claims.md) for the full output schema, dim-folder rules, format-family details, and edge cases.
+
 ### `remove-chunks` - Empty chunks from a region
 
 Empties the named slots in a target `.mca`. If a slot was external, its companion `c.<absX>.<absZ>.mcc` file is also deleted. Slots not listed are preserved verbatim, including their `.mcc` files. Same byte-level model as `replace-chunks` — no NBT decoding.
