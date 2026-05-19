@@ -20,11 +20,13 @@ Use this skill only after explicit `$version-bump` invocation.
 9. If files other than `Cargo.toml` and `Cargo.lock` changed, stop and report the unexpected changes.
 10. Commit only `Cargo.toml` and `Cargo.lock`.
 11. Tag the commit with the version number.
-12. Push the tag.
+12. Push the current branch commit.
+13. Push the tag.
 
 ## Commit And Tag Rules
 
 - Use a conventional commit message: `chore(release): bump version to X.Y.Z`.
 - Do not append an issue reference unless the user provides one.
 - Use tag name `vX.Y.Z`.
+- Push the release commit before pushing the tag.
 - If pushing the tag fails because of remote or authentication issues, report the failure clearly.
