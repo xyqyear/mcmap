@@ -50,6 +50,9 @@ enum Commands {
     /// companions when the slot was external.
     RemoveChunks(commands::remove_chunks::RemoveChunksArgs),
 
+    /// Remove low-inhabited chunks discovered under world/dimension paths.
+    PruneInhabited(commands::prune_inhabited::PruneInhabitedArgs),
+
     /// Extract FTB chunk-claim data from a server world directory and write
     /// JSON describing teams, members, claims, and dim-folder mapping.
     /// Auto-detects FTB format family (1.7.10 / 1.10 / 1.12 / 1.16+).
@@ -114,6 +117,7 @@ fn main() {
         Commands::DownloadClient(args) => commands::download_client::execute(args),
         Commands::ReplaceChunks(args) => commands::replace_chunks::execute(args),
         Commands::RemoveChunks(args) => commands::remove_chunks::execute(args),
+        Commands::PruneInhabited(args) => commands::prune_inhabited::execute(args),
         Commands::ExtractFtbClaims(args) => commands::extract_ftb_claims::execute(args),
         Commands::ExtractPlayers(args) => commands::extract_players::execute(args),
     };

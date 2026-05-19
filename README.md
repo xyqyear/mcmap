@@ -305,6 +305,28 @@ mcmap remove-chunks -t world/region/r.7.-1.mca -c "4,15;4,14;13,22"
 
 For a full per-chunk wipe on a 1.17+ world, mirror across the file split the same way as `replace-chunks`.
 
+### `prune-inhabited` - Remove low-activity chunks
+
+Scans any path for child directories named `region` that contain `r.X.Z.mca`
+files, reads each chunk's `InhabitedTime`, and removes chunks whose value is
+below a threshold. The path may be a world directory, dimension directory, or a
+larger archive extraction root.
+
+`--mode chunks` removes each matching chunk independently. `--mode regions`
+removes a region only when every present chunk in that region is below the
+threshold. `--dry-run` prints the chunks or regions that would be removed
+without changing files. Actual deletion uses the same region I/O as
+`remove-chunks`, including `.mcc` cleanup and matching `entities/` / `poi/`
+slots when those sibling files exist.
+
+```bash
+# Preview chunks with less than one minute of inhabited time
+mcmap prune-inhabited /srv/world --threshold 1200 --dry-run
+
+# Remove only whole regions where every present chunk is below the threshold
+mcmap prune-inhabited /srv/world --threshold 1200 --mode regions
+```
+
 ## Performance
 
 Performance benchmarks on a 512×512 region:

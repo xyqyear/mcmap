@@ -329,6 +329,53 @@ Per-chunk events (one per coord in `--chunks`, in input order):
 {"type":"result","removed":2}
 ```
 
+## `prune-inhabited`
+
+Scans arbitrary roots for `region/` directories containing `r.X.Z.mca` files,
+reads chunk `InhabitedTime`, and removes low-activity chunks. In JSON mode,
+`--dry-run` affects only mutation; the event stream has the same shape and
+sets `dry_run` accordingly.
+
+### Event types
+
+Per discovered region directory:
+
+| `type`       | Extra fields                                      |
+|--------------|---------------------------------------------------|
+| `region_dir` | `path` (string), `regions` (number of `.mca` files) |
+
+When `--mode chunks`, one event per selected chunk:
+
+| `type`         | Extra fields |
+|----------------|--------------|
+| `chunk_pruned` | `region` (string), `chunk_x`, `chunk_z`, `rel_x`, `rel_z`, `inhabited_time`, `dry_run` |
+
+When `--mode regions`, one event per selected region:
+
+| `type`          | Extra fields |
+|-----------------|--------------|
+| `region_pruned` | `region` (string), `region_x`, `region_z`, `chunks`, `max_inhabited_time`, `dry_run` |
+
+`result` event:
+
+| Field              | Description |
+|--------------------|-------------|
+| `mode`             | `"chunks"` or `"regions"`. |
+| `dry_run`          | Whether files were left untouched. |
+| `region_dirs`      | Number of discovered `region/` directories. |
+| `regions_scanned`  | Number of `.mca` files inspected. |
+| `chunks_scanned`   | Number of present chunk slots whose NBT was read. |
+| `chunks_selected`  | Number of chunks selected for removal. |
+| `regions_selected` | Number of regions with selected chunks, or whole regions selected in region mode. |
+
+### Example
+
+```json
+{"type":"region_dir","path":"world/region","regions":2}
+{"type":"chunk_pruned","region":"world/region/r.0.0.mca","chunk_x":4,"chunk_z":15,"rel_x":4,"rel_z":15,"inhabited_time":480,"dry_run":true}
+{"type":"result","mode":"chunks","dry_run":true,"region_dirs":1,"regions_scanned":2,"chunks_scanned":1536,"chunks_selected":1,"regions_selected":1}
+```
+
 ## `extract-ftb-claims`
 
 Extracts FTB chunk-claim data from a server world directory and emits a

@@ -919,6 +919,7 @@ dependencies = [
  "image",
  "libc",
  "log",
+ "lz4-java-wrc",
  "rayon",
  "regex",
  "reqwest",
