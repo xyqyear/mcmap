@@ -15,7 +15,7 @@ Use this skill only after explicit `$version-bump` invocation.
 4. After approval, run `git status --short`.
 5. If there are any existing unstaged, staged, or uncommitted changes, reject the version bump request and stop.
 6. Update only the package version in `Cargo.toml`.
-7. Regenerate `Cargo.lock` with Cargo.
+7. Run `cargo check` to refresh `Cargo.lock`.
 8. Recheck `git status --short`.
 9. If files other than `Cargo.toml` and `Cargo.lock` changed, stop and report the unexpected changes.
 10. Commit only `Cargo.toml` and `Cargo.lock`.
@@ -28,4 +28,3 @@ Use this skill only after explicit `$version-bump` invocation.
 - Do not append an issue reference unless the user provides one.
 - Use tag name `vX.Y.Z`.
 - If pushing the tag fails because of remote or authentication issues, report the failure clearly.
-
