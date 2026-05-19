@@ -1,0 +1,8 @@
+interface:
+  display_name: "Version Bump"
+  short_description: "Repository release version bump workflow"
+  default_prompt: "Use $version-bump to prepare this repository's next release version."
+
+policy:
+  allow_implicit_invocation: false
+

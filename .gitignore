@@ -1,5 +1,10 @@
 /target
 *.mca
-.claude
+.claude/*
+.codex/*
+!.claude/
+!.claude/skills/
+!.codex/
+!.codex/skills/
 /docs
 __pycache__
