@@ -276,13 +276,10 @@ pub fn run_forge_v12(
             // Modded (or vanilla-not-in-table): run the modern resolver
             // against the block's blockstate JSON. Pick the first variant's
             // properties so the resolver can render an exact face.
-            let probe_props = pools
-                .blockstates
-                .get(name)
-                .and_then(|bs| match bs {
-                    Blockstate::Variants(vars) => vars.keys().next().cloned(),
-                    Blockstate::Multipart(_) => None,
-                });
+            let probe_props = pools.blockstates.get(name).and_then(|bs| match bs {
+                Blockstate::Variants(vars) => vars.keys().next().cloned(),
+                Blockstate::Multipart(_) => None,
+            });
             if let Some(color) = resolver.resolve(name, probe_props.as_deref()) {
                 palette.insert(format!("{}", id), color);
                 stats.modded_resolved += 1;

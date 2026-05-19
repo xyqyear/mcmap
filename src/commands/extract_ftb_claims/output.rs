@@ -6,6 +6,7 @@
 // — an entry per dim id seen in claim data, with `exists` set when
 // `<world>/<folder>/region/` is present on disk.
 
+use crate::commands::dim::DimensionEntry;
 use serde::Serialize;
 
 pub const SCHEMA_VERSION: u32 = 1;
@@ -17,18 +18,6 @@ pub struct Output {
     pub world_dir: String,
     pub dimensions: Vec<DimensionEntry>,
     pub teams: Vec<Team>,
-}
-
-#[derive(Serialize, Debug)]
-pub struct DimensionEntry {
-    /// Raw FTB dim id. ResourceLocation string for SNBT family
-    /// (`"minecraft:overworld"`); decimal int for pre-1.13 families (`"0"`,
-    /// `"-1"`, `"7"`).
-    pub id: String,
-    /// Path relative to `world_dir`. `"."` for the overworld.
-    pub folder: String,
-    /// Whether `<world_dir>/<folder>/region/` exists on disk.
-    pub exists: bool,
 }
 
 #[derive(Serialize, Debug)]

@@ -178,7 +178,11 @@ pub fn parse_blockstate_lenient(bytes: &[u8]) -> Option<RawBlockstate> {
         for (k, v) in leaf_textures {
             merged.insert(k, v);
         }
-        let textures = if merged.is_empty() { None } else { Some(merged) };
+        let textures = if merged.is_empty() {
+            None
+        } else {
+            Some(merged)
+        };
         let key = format!("__forge_{}", idx);
         idx += 1;
         variants_out.insert(
@@ -262,7 +266,9 @@ pub fn qualify(name: &str) -> String {
 /// path-with-subfolder convention.
 pub fn qualify_model(name: &str) -> String {
     let qualified = qualify(name);
-    let (ns, rest) = qualified.split_once(':').unwrap_or(("minecraft", &qualified));
+    let (ns, rest) = qualified
+        .split_once(':')
+        .unwrap_or(("minecraft", &qualified));
     if rest.starts_with("block/") || rest.starts_with("item/") {
         qualified
     } else {
@@ -273,10 +279,7 @@ pub fn qualify_model(name: &str) -> String {
 /// Walk the parent chain, merging textures (child overrides parent) and
 /// inheriting elements (child overrides if declared). Resolves `#ref`
 /// texture variables at the end. Returns None if the root model is missing.
-pub fn flatten_raw_model(
-    name: &str,
-    raw_models: &HashMap<String, RawModel>,
-) -> Option<RawModel> {
+pub fn flatten_raw_model(name: &str, raw_models: &HashMap<String, RawModel>) -> Option<RawModel> {
     flatten_raw_model_with_overrides(name, raw_models, None)
 }
 

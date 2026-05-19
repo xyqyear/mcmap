@@ -57,11 +57,7 @@ pub trait RenderEngine {
     /// to the north (smaller z) in world coords — used for top-shading. When
     /// the current chunk is at the top of a region, `north` may be the last
     /// row of the region above; when the region above is missing, it's `None`.
-    fn render_chunk(
-        &self,
-        chunk: &Self::Chunk,
-        north: Option<&Self::Chunk>,
-    ) -> [Rgba; 16 * 16];
+    fn render_chunk(&self, chunk: &Self::Chunk, north: Option<&Self::Chunk>) -> [Rgba; 16 * 16];
 }
 
 /// Drive one region through an engine. Returns `Ok(None)` when the region

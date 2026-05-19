@@ -17,9 +17,9 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use super::dim::{folder_to_relative, resolve_legacy};
-use super::output::{Claim, DimensionEntry, Member, Output, SCHEMA_VERSION, Team, TeamType};
+use super::output::{Claim, Member, Output, SCHEMA_VERSION, Team, TeamType};
 use super::uuid_util;
+use crate::commands::dim::{DimensionEntry, entry_for_legacy};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -100,7 +100,12 @@ pub fn run(world_dir: &Path) -> Result<Output> {
             continue;
         }
         let (name, team_type, members, owner) = match team_meta.get(&team_id) {
-            Some(m) => (m.name.clone(), m.team_type, m.members.clone(), m.owner.clone()),
+            Some(m) => (
+                m.name.clone(),
+                m.team_type,
+                m.members.clone(),
+                m.owner.clone(),
+            ),
             None => (None, TeamType::Unknown, Vec::new(), None),
         };
         teams.push(Team {
@@ -115,14 +120,7 @@ pub fn run(world_dir: &Path) -> Result<Output> {
 
     let dimensions: Vec<DimensionEntry> = all_dims
         .keys()
-        .map(|&dim| {
-            let (folder, exists) = resolve_legacy(world_dir, dim);
-            DimensionEntry {
-                id: dim.to_string(),
-                folder: folder_to_relative(world_dir, &folder),
-                exists,
-            }
-        })
+        .map(|&dim| entry_for_legacy(world_dir, dim))
         .collect();
 
     Ok(Output {
@@ -233,10 +231,7 @@ fn load_all_team_meta(
     out
 }
 
-fn build_loaded_team(
-    parsed: TeamFile,
-    username_to_uuid: &HashMap<String, String>,
-) -> LoadedTeam {
+fn build_loaded_team(parsed: TeamFile, username_to_uuid: &HashMap<String, String>) -> LoadedTeam {
     let team_type = match parsed.team_type.as_deref() {
         Some("player") => TeamType::Player,
         Some("server") | Some("server_no_save") => TeamType::Server,

@@ -60,11 +60,7 @@ impl RenderedPalette {
 }
 
 impl fastanvil::Palette for RenderedPalette {
-    fn pick(
-        &self,
-        block: &fastanvil::Block,
-        biome: Option<fastanvil::biome::Biome>,
-    ) -> Rgba {
+    fn pick(&self, block: &fastanvil::Block, biome: Option<fastanvil::biome::Biome>) -> Rgba {
         // We deliberately don't broaden this to substrings like `void` —
         // `theabyss:black_void` is a real solid block, not a hole.
         let name = block.name();
@@ -97,13 +93,8 @@ impl<'a> RenderEngine for TopShadeRenderer<'a> {
         ChunkData::from_bytes(bytes).map(Some)
     }
 
-    fn render_chunk(
-        &self,
-        chunk: &ChunkData,
-        north: Option<&ChunkData>,
-    ) -> [Rgba; 16 * 16] {
-        let fa_renderer =
-            fastanvil::TopShadeRenderer::new(self.palette, self.height_mode);
+    fn render_chunk(&self, chunk: &ChunkData, north: Option<&ChunkData>) -> [Rgba; 16 * 16] {
+        let fa_renderer = fastanvil::TopShadeRenderer::new(self.palette, self.height_mode);
         fa_renderer.render(chunk, north)
     }
 }

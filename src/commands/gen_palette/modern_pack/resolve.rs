@@ -14,10 +14,7 @@ use crate::commands::gen_palette::shared::color::avg_colour;
 /// Preference order: up → down → side faces (block top is what matters most
 /// for a top-down map; down handles blocks only visible from underneath;
 /// sides are last resort).
-pub fn render_any_face(
-    model: &RawModel,
-    textures: &HashMap<String, Texture>,
-) -> Option<Texture> {
+pub fn render_any_face(model: &RawModel, textures: &HashMap<String, Texture>) -> Option<Texture> {
     let priority = ["up", "down", "north", "south", "east", "west"];
     let elements = model.elements.as_ref()?;
     for key in &priority {
@@ -332,7 +329,10 @@ pub fn find_generic_blockstates<'a>(
         if bs_norm == name_norm {
             continue; // direct match handled by primary lookup
         }
-        let candidates = [bs_norm.as_str(), bs_norm.strip_prefix("block").unwrap_or("")];
+        let candidates = [
+            bs_norm.as_str(),
+            bs_norm.strip_prefix("block").unwrap_or(""),
+        ];
         let mut best_for_key: Option<usize> = None;
         for cand in candidates {
             if cand.is_empty() || cand == name_norm {

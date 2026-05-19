@@ -74,12 +74,17 @@ pub fn detect_variant(level_dat: Option<&Path>) -> Result<PaletteVariant> {
         return Ok(PaletteVariant::Modern);
     };
     let nbt = read_gzipped(path)?;
-    let probe: LevelDatProbe = fastnbt::from_bytes(&nbt)
-        .map_err(|e| format!("level.dat NBT parse: {}", e))?;
+    let probe: LevelDatProbe =
+        fastnbt::from_bytes(&nbt).map_err(|e| format!("level.dat NBT parse: {}", e))?;
     let Some(fml) = probe.fml else {
         return Ok(PaletteVariant::Modern);
     };
-    if fml.registries.as_ref().and_then(|r| r.blocks.as_ref()).is_some() {
+    if fml
+        .registries
+        .as_ref()
+        .and_then(|r| r.blocks.as_ref())
+        .is_some()
+    {
         return Ok(PaletteVariant::Forge112);
     }
     if fml.item_data.is_some() {
@@ -112,8 +117,8 @@ struct ItemEntry17 {
 
 pub fn load_fml_registry_v17(path: &Path) -> Result<FmlRegistry17> {
     let nbt = read_gzipped(path)?;
-    let data: LevelDatV17 = fastnbt::from_bytes(&nbt)
-        .map_err(|e| format!("level.dat NBT parse: {}", e))?;
+    let data: LevelDatV17 =
+        fastnbt::from_bytes(&nbt).map_err(|e| format!("level.dat NBT parse: {}", e))?;
 
     let mut registry = FmlRegistry17::default();
     for entry in data.fml.item_data {
@@ -134,7 +139,10 @@ pub fn load_fml_registry_v17(path: &Path) -> Result<FmlRegistry17> {
                 registry.items.insert(id, name.to_string());
             }
             _ => {
-                debug!("Unknown FML registry prefix: {:#x} for {:?}", first_byte, key);
+                debug!(
+                    "Unknown FML registry prefix: {:#x} for {:?}",
+                    first_byte, key
+                );
             }
         }
     }
@@ -177,8 +185,8 @@ struct RegistryEntryV12 {
 
 pub fn load_fml_registry_v12(path: &Path) -> Result<FmlRegistry12> {
     let nbt = read_gzipped(path)?;
-    let data: LevelDatV12 = fastnbt::from_bytes(&nbt)
-        .map_err(|e| format!("level.dat NBT parse: {}", e))?;
+    let data: LevelDatV12 =
+        fastnbt::from_bytes(&nbt).map_err(|e| format!("level.dat NBT parse: {}", e))?;
 
     let mut registry = FmlRegistry12::default();
     let Some(blocks) = data.fml.registries.blocks else {

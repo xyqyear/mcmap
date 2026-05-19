@@ -1,20 +1,22 @@
-// Dim-ID → on-disk dim folder resolution.
-//
-// 1.16+ (SNBT family): rule is exact and final. The three vanilla dims sit at
-// `world/region/`, `world/DIM-1/region/`, `world/DIM1/region/`; everything
-// else is `world/dimensions/<ns>/<path>/region/`. Mods cannot override.
-//
-// Pre-1.13 (A0/A1/A2): default is `DIM<N>/`, but mods like Galacticraft,
-// Dimensional Doors, Underground Biomes, Mystcraft override to
-// `DIM_SPACESTATION<N>`, `PERSONAL_DIM_<N>`, etc. The same numeric id can map
-// to different folders across worlds, so we probe disk: try the default
-// first, then scan for any subdir whose name ends in `<N>` (preceded by a
-// non-digit character) that contains `region/`.
+// Dimension-id -> on-disk dimension folder resolution shared by extractors.
 
+use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// 1.16+ ResourceLocation → folder. Returns the path; the caller computes
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+pub struct DimensionEntry {
+    /// Raw dimension id. ResourceLocation string for modern worlds
+    /// (`"minecraft:overworld"`); decimal int string for legacy worlds
+    /// (`"0"`, `"-1"`, `"7"`).
+    pub id: String,
+    /// Path relative to `world_dir`. `"."` for the overworld.
+    pub folder: String,
+    /// Whether `<world_dir>/<folder>/region/` exists on disk.
+    pub exists: bool,
+}
+
+/// 1.16+ ResourceLocation -> folder. Returns the path; the caller computes
 /// `exists` separately so the output schema can flag missing folders.
 pub fn resolve_modern(world_dir: &Path, dim_id: &str) -> PathBuf {
     match dim_id {
@@ -28,7 +30,7 @@ pub fn resolve_modern(world_dir: &Path, dim_id: &str) -> PathBuf {
     }
 }
 
-/// Pre-1.13 int dim id → (folder, exists). Tries `DIM<N>/region/` first, then
+/// Pre-1.13 int dim id -> (folder, exists). Tries `DIM<N>/region/` first, then
 /// scans `world_dir` for any sibling matching `<prefix><N>` where `<prefix>`
 /// ends in a non-digit character and contains `region/`.
 pub fn resolve_legacy(world_dir: &Path, dim_id: i32) -> (PathBuf, bool) {
@@ -49,9 +51,10 @@ pub fn resolve_legacy(world_dir: &Path, dim_id: i32) -> (PathBuf, bool) {
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
             if let Some(prefix) = name_str.strip_suffix(&*target) {
-                if !prefix.is_empty()
-                    && !prefix.chars().last().unwrap().is_ascii_digit()
-                {
+                if dim_id >= 0 && prefix.ends_with('-') {
+                    continue;
+                }
+                if !prefix.is_empty() && !prefix.chars().last().unwrap().is_ascii_digit() {
                     return (entry.path(), true);
                 }
             }
@@ -61,7 +64,7 @@ pub fn resolve_legacy(world_dir: &Path, dim_id: i32) -> (PathBuf, bool) {
 }
 
 /// Convert an absolute folder path into a JSON-friendly path relative to
-/// `world_dir`. Overworld → `"."`. Always uses `/` separator.
+/// `world_dir`. Overworld -> `"."`. Always uses `/` separator.
 pub fn folder_to_relative(world_dir: &Path, folder: &Path) -> String {
     if folder == world_dir {
         return ".".into();
@@ -70,6 +73,31 @@ pub fn folder_to_relative(world_dir: &Path, folder: &Path) -> String {
         .strip_prefix(world_dir)
         .map(|p| p.to_string_lossy().replace('\\', "/"))
         .unwrap_or_else(|_| folder.to_string_lossy().to_string())
+}
+
+pub fn entry_for_modern(world_dir: &Path, dim_id: &str) -> DimensionEntry {
+    let folder = resolve_modern(world_dir, dim_id);
+    DimensionEntry {
+        id: dim_id.to_string(),
+        folder: folder_to_relative(world_dir, &folder),
+        exists: folder.join("region").is_dir(),
+    }
+}
+
+pub fn entry_for_legacy(world_dir: &Path, dim_id: i32) -> DimensionEntry {
+    let (folder, exists) = resolve_legacy(world_dir, dim_id);
+    DimensionEntry {
+        id: dim_id.to_string(),
+        folder: folder_to_relative(world_dir, &folder),
+        exists,
+    }
+}
+
+pub fn entry_for_id(world_dir: &Path, dim_id: &str) -> DimensionEntry {
+    match dim_id.parse::<i32>() {
+        Ok(dim) => entry_for_legacy(world_dir, dim),
+        Err(_) => entry_for_modern(world_dir, dim_id),
+    }
 }
 
 #[cfg(test)]
@@ -140,11 +168,20 @@ mod tests {
 
     #[test]
     fn legacy_avoids_digit_collision() {
-        // DIM110 must NOT match dim id 10 (suffix "10" is preceded by '1', a digit).
         let w = tmpdir();
         fs::create_dir_all(w.join("DIM110/region")).unwrap();
         let (folder, exists) = resolve_legacy(&w, 10);
         assert_eq!(folder, w.join("DIM10"));
+        assert!(!exists);
+        let _ = fs::remove_dir_all(&w);
+    }
+
+    #[test]
+    fn legacy_positive_dim_does_not_match_negative_folder() {
+        let w = tmpdir();
+        fs::create_dir_all(w.join("DIM-1/region")).unwrap();
+        let (folder, exists) = resolve_legacy(&w, 1);
+        assert_eq!(folder, w.join("DIM1"));
         assert!(!exists);
         let _ = fs::remove_dir_all(&w);
     }

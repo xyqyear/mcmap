@@ -277,6 +277,23 @@ mcmap --json extract-ftb-claims --world /opt/srv/atm9/world
 
 See [`docs/extract_ftb_claims.md`](./docs/extract_ftb_claims.md) for the full output schema, dim-folder rules, format-family details, and edge cases.
 
+### `extract-players` - Extract player coordinates
+
+Reads vanilla player files from a server world directory and emits current player coordinates. Supports the player storage layouts used from 1.7.10 through modern releases: `playerdata/<uuid>.dat`, new `players/data/<uuid>.dat`, and legacy `players/<name>.dat`. The output uses the same dimension model as `extract-ftb-claims`: every player has a `dim` string that joins to the top-level `dimensions[]` lookup table.
+
+Files that look like player sidecars but do not contain vanilla `Pos` + `Dimension` tags are listed under `skipped[]` instead of failing the whole extraction.
+
+```bash
+# Pretty JSON to stdout
+mcmap extract-players --world /opt/srv/atm10/world
+
+# Write to a file
+mcmap extract-players --world /opt/srv/atm10/world -o players.json
+
+# NDJSON event stream (the full data is embedded in the result event)
+mcmap --json extract-players --world /opt/srv/atm10/world
+```
+
 ### `remove-chunks` - Empty chunks from a region
 
 Empties the named slots in a target `.mca`. If a slot was external, its companion `c.<absX>.<absZ>.mcc` file is also deleted. Slots not listed are preserved verbatim, including their `.mcc` files. Same byte-level model as `replace-chunks` — no NBT decoding.

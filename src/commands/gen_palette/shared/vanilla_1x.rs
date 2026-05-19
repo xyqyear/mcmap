@@ -59,10 +59,7 @@ pub fn variants_for(name: &str) -> Vec<(u16, &'static str)> {
         "flowing_water" | "water" => return single("minecraft:block/water_still"),
         "flowing_lava" | "lava" => return single("minecraft:block/lava_still"),
         "sand" => {
-            return vec![
-                (0, "minecraft:block/sand"),
-                (1, "minecraft:block/red_sand"),
-            ];
+            return vec![(0, "minecraft:block/sand"), (1, "minecraft:block/red_sand")];
         }
         "gravel" => return single("minecraft:block/gravel"),
         "gold_ore" => return single("minecraft:block/gold_ore"),
@@ -378,12 +375,8 @@ pub fn apply_vanilla_postprocess<I>(
             "water" | "flowing_water" => set_block_color(palette, *id, [63, 118, 228, 180]),
             "lava" | "flowing_lava" => set_block_color(palette, *id, [207, 78, 0, 255]),
             "grass" | "mycelium" => multiply_block_color(palette, *id, grass_tint),
-            "tallgrass" | "fern" | "double_plant" => {
-                multiply_block_color(palette, *id, grass_tint)
-            }
-            "leaves" | "leaves2" | "waterlily" => {
-                multiply_block_color(palette, *id, foliage_tint)
-            }
+            "tallgrass" | "fern" | "double_plant" => multiply_block_color(palette, *id, grass_tint),
+            "leaves" | "leaves2" | "waterlily" => multiply_block_color(palette, *id, foliage_tint),
             "vine" => multiply_block_color(palette, *id, vine_tint),
             _ => {}
         }

@@ -106,11 +106,7 @@ impl From<&Counters> for ResolverCounters {
     }
 }
 
-pub fn run_modern(
-    packs: &[PathBuf],
-    output: &Path,
-    overrides: Option<&Path>,
-) -> Result<()> {
+pub fn run_modern(packs: &[PathBuf], output: &Path, overrides: Option<&Path>) -> Result<()> {
     info!("Starting palette generation (modern / 1.13+)");
     info!("Packs ({}):", packs.len());
     for p in packs {

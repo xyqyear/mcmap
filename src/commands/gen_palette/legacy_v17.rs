@@ -21,7 +21,9 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use super::legacy_pack::{MatchKind, ResolveStats, TexturePack, load_texture_packs, resolve_modded};
+use super::legacy_pack::{
+    MatchKind, ResolveStats, TexturePack, load_texture_packs, resolve_modded,
+};
 use super::leveldat::{FmlRegistry17, load_fml_registry_v17};
 use super::shared::color::avg_colour;
 use super::shared::output::PaletteOutput;

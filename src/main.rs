@@ -54,6 +54,10 @@ enum Commands {
     /// JSON describing teams, members, claims, and dim-folder mapping.
     /// Auto-detects FTB format family (1.7.10 / 1.10 / 1.12 / 1.16+).
     ExtractFtbClaims(commands::extract_ftb_claims::ExtractFtbClaimsArgs),
+
+    /// Extract current player coordinates from vanilla player files and
+    /// write JSON with the shared dim-folder mapping.
+    ExtractPlayers(commands::extract_players::ExtractPlayersArgs),
 }
 
 #[derive(Serialize)]
@@ -79,7 +83,10 @@ fn main() {
         if !cfg!(unix) {
             let msg = "--chown is only supported on Unix platforms".to_string();
             if cli.json {
-                output::emit(&ErrorEvent { ty: "error", message: msg });
+                output::emit(&ErrorEvent {
+                    ty: "error",
+                    message: msg,
+                });
             } else {
                 eprintln!("Error: {}", msg);
             }
@@ -88,7 +95,10 @@ fn main() {
         if !chown::is_root() {
             let msg = "--chown requires root (effective uid 0)".to_string();
             if cli.json {
-                output::emit(&ErrorEvent { ty: "error", message: msg });
+                output::emit(&ErrorEvent {
+                    ty: "error",
+                    message: msg,
+                });
             } else {
                 eprintln!("Error: {}", msg);
             }
@@ -105,11 +115,15 @@ fn main() {
         Commands::ReplaceChunks(args) => commands::replace_chunks::execute(args),
         Commands::RemoveChunks(args) => commands::remove_chunks::execute(args),
         Commands::ExtractFtbClaims(args) => commands::extract_ftb_claims::execute(args),
+        Commands::ExtractPlayers(args) => commands::extract_players::execute(args),
     };
 
     if let Err(e) = result {
         if cli.json {
-            output::emit(&ErrorEvent { ty: "error", message: e.to_string() });
+            output::emit(&ErrorEvent {
+                ty: "error",
+                message: e.to_string(),
+            });
         } else {
             eprintln!("Error: {}", e);
         }

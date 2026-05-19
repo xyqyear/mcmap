@@ -236,7 +236,10 @@ pub fn execute(args: AnalyzeArgs) -> Result<()> {
             unique_blocks: blocks_found.len(),
             unknown_blocks: unknown_blocks
                 .iter()
-                .map(|(name, count)| UnknownBlock { name, count: *count })
+                .map(|(name, count)| UnknownBlock {
+                    name,
+                    count: *count,
+                })
                 .collect(),
         });
         return Ok(());
@@ -245,10 +248,7 @@ pub fn execute(args: AnalyzeArgs) -> Result<()> {
     if unknown_blocks.is_empty() {
         info!("All blocks found in regions are present in the palette.");
     } else {
-        info!(
-            "Found {} block types not in palette:",
-            unknown_blocks.len()
-        );
+        info!("Found {} block types not in palette:", unknown_blocks.len());
         let separator: String = "=".repeat(60);
         println!("\nBlocks not in palette:");
         println!("{}", separator);

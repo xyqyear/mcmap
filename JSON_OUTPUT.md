@@ -358,6 +358,51 @@ result lands in one event at the end.
 {"type":"result","detected_format":"snbt","teams":12,"claims":225,"dimensions":4,"output":"./claims.json","data":{"mcmap_extract_ftb_claims_version":1,"detected_format":"snbt","world_dir":"/srv/atm9/world","dimensions":[{"id":"minecraft:overworld","folder":".","exists":true}],"teams":[{"id":"...","type":"player","members":[],"claims":[{"dim":"minecraft:overworld","cx":4,"cz":-7,"force_loaded":false}]}]}}
 ```
 
+## `extract-players`
+
+Extracts current coordinates from vanilla player files in a server world
+directory. The full extraction payload is embedded in the terminal `result`
+event so a `--json` consumer can read everything off the event stream without
+also parsing a side file.
+
+### Event types
+
+No `progress` events — extraction is short and synchronous; the entire
+result lands in one event at the end.
+
+`result` event:
+
+| Field        | Description                                                                                  |
+|--------------|----------------------------------------------------------------------------------------------|
+| `players`    | Number of valid player records in the output (count of `data.players`).                      |
+| `skipped`    | Number of candidate player files skipped because they were malformed or sidecars.            |
+| `dimensions` | Number of unique dimensions seen in player data (count of `data.dimensions`).                |
+| `output`     | Absent unless `--output` was passed. The destination file path the JSON was also written to. |
+| `data`       | The full extraction payload — the same object that gets written to `--output` or stdout.    |
+
+Payload schema highlights:
+
+| Path                       | Description                                                                                               |
+|----------------------------|-----------------------------------------------------------------------------------------------------------|
+| `data.dimensions[]`        | Shared dim lookup entries: `{id, folder, exists}`. Same representation as `extract-ftb-claims`.           |
+| `data.players[].id`        | Player id from the file stem. Usually UUID.                                                               |
+| `data.players[].id_kind`   | `"uuid"` or `"name"`.                                                                                     |
+| `data.players[].source`    | Player file path relative to `world_dir`, with `/` separators.                                            |
+| `data.players[].storage`   | `"playerdata"`, `"players_data"`, or `"legacy_players"`.                                                  |
+| `data.players[].dim`       | Dimension id string. Joins to `data.dimensions[].id`; legacy numeric ids are decimal strings.             |
+| `data.players[].pos`       | Object `{x, y, z}` from the player's NBT `Pos` list.                                                       |
+| `data.players[].data_version` | Optional NBT `DataVersion` when present.                                                              |
+| `data.skipped[]`           | Candidate files that could not be interpreted as vanilla player files.                                    |
+
+Skip reasons are stable strings: `parse_error`, `missing_pos`,
+`invalid_pos`, `missing_dimension`, `invalid_dimension`.
+
+### Example
+
+```json
+{"type":"result","players":2,"skipped":1,"dimensions":2,"output":"./players.json","data":{"mcmap_extract_players_version":1,"world_dir":"/srv/atm10/world","dimensions":[{"id":"allthemodium:mining","folder":"dimensions/allthemodium/mining","exists":true},{"id":"minecraft:overworld","folder":".","exists":true}],"players":[{"id":"0b4c4192-8eb3-4f0b-9022-8e2cb2ee6fc0","id_kind":"uuid","source":"playerdata/0b4c4192-8eb3-4f0b-9022-8e2cb2ee6fc0.dat","storage":"playerdata","data_version":3955,"dim":"minecraft:overworld","pos":{"x":-15630.5,"y":73.0,"z":10944.5}}],"skipped":[{"source":"playerdata/example_cyclic.dat","storage":"playerdata","reason":"missing_pos"}]}}
+```
+
 ## Error event
 
 Any failure after argument parsing terminates the stream with:

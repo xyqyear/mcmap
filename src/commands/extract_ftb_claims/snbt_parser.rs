@@ -75,7 +75,11 @@ pub struct ParseError {
 
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "snbt parse error: {} @ {}:{}", self.message, self.row, self.col)
+        write!(
+            f,
+            "snbt parse error: {} @ {}:{}",
+            self.message, self.row, self.col
+        )
     }
 }
 
@@ -298,7 +302,10 @@ impl<'a> Parser<'a> {
         loop {
             let c = self.next()?;
             if c == '\n' && !escape {
-                return Err(self.err_at(self.pos - 1, format!("newline inside {}-quoted string", stop)));
+                return Err(self.err_at(
+                    self.pos - 1,
+                    format!("newline inside {}-quoted string", stop),
+                ));
             }
             if escape {
                 escape = false;
@@ -342,10 +349,13 @@ fn parse_word(s: &str) -> SnbtValue {
     match s {
         "true" => return SnbtValue::Byte(1),
         "false" => return SnbtValue::Byte(0),
-        "Infinity" | "Infinityd" | "+Infinity" | "+Infinityd" | "∞" | "∞d" | "+∞" | "+∞d" => {
+        "Infinity" | "Infinityd" | "+Infinity" | "+Infinityd" | "∞" | "∞d" | "+∞" | "+∞d" =>
+        {
             return SnbtValue::Double(f64::INFINITY);
         }
-        "-Infinity" | "-Infinityd" | "-∞" | "-∞d" => return SnbtValue::Double(f64::NEG_INFINITY),
+        "-Infinity" | "-Infinityd" | "-∞" | "-∞d" => {
+            return SnbtValue::Double(f64::NEG_INFINITY);
+        }
         "NaN" | "NaNd" => return SnbtValue::Double(f64::NAN),
         "Infinityf" | "+Infinityf" | "∞f" | "+∞f" => return SnbtValue::Float(f32::INFINITY),
         "-Infinityf" | "-∞f" => return SnbtValue::Float(f32::NEG_INFINITY),
@@ -471,7 +481,8 @@ mod tests {
 
     #[test]
     fn nested_compound_and_list() {
-        let v = parse_ok("{chunks: {\n\"minecraft:overworld\": [\n{x: 1, z: 2}\n{x: 3, z: 4}\n]\n}}");
+        let v =
+            parse_ok("{chunks: {\n\"minecraft:overworld\": [\n{x: 1, z: 2}\n{x: 3, z: 4}\n]\n}}");
         let m = v.as_compound().unwrap();
         let chunks = m["chunks"].as_compound().unwrap();
         let ow = chunks["minecraft:overworld"].as_list().unwrap();
@@ -548,12 +559,14 @@ mod tests {
         let s = "{\n\tid: \"1ccb5e0e-75d7-4752-ac17-c4cc215971d8\"\n\ttype: \"player\"\n\tplayer_name: \"ZB0at\"\n\tranks: {\n\t\t1ccb5e0e-75d7-4752-ac17-c4cc215971d8: \"owner\"\n\t}\n\tproperties: {\n\t\t\"ftbteams:display_name\": \"ZB0at\"\n\t\t\"ftbteams:free_to_join\": 0b\n\t}\n\tmessage_history: [ ]\n\textra: { }\n}";
         let v = parse_ok(s);
         let m = v.as_compound().unwrap();
-        assert_eq!(m["id"].as_str(), Some("1ccb5e0e-75d7-4752-ac17-c4cc215971d8"));
+        assert_eq!(
+            m["id"].as_str(),
+            Some("1ccb5e0e-75d7-4752-ac17-c4cc215971d8")
+        );
         assert_eq!(m["type"].as_str(), Some("player"));
         assert_eq!(m["player_name"].as_str(), Some("ZB0at"));
         assert_eq!(
-            m["ranks"].as_compound().unwrap()["1ccb5e0e-75d7-4752-ac17-c4cc215971d8"]
-                .as_str(),
+            m["ranks"].as_compound().unwrap()["1ccb5e0e-75d7-4752-ac17-c4cc215971d8"].as_str(),
             Some("owner")
         );
         assert_eq!(m["message_history"].as_list().unwrap().len(), 0);
@@ -620,7 +633,11 @@ mod tests {
         for (p, e) in &failures {
             eprintln!("  FAIL {} :: {}", p.display(), e);
         }
-        assert!(failures.is_empty(), "{} SNBT files failed to parse", failures.len());
+        assert!(
+            failures.is_empty(),
+            "{} SNBT files failed to parse",
+            failures.len()
+        );
     }
 
     fn walk_snbt(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {

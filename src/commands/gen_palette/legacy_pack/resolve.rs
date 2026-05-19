@@ -25,11 +25,7 @@ pub enum MatchKind {
     Fuzzy,
 }
 
-pub fn resolve_modded(
-    ns: &str,
-    local: &str,
-    packs: &[TexturePack],
-) -> Option<(Rgba, MatchKind)> {
+pub fn resolve_modded(ns: &str, local: &str, packs: &[TexturePack]) -> Option<(Rgba, MatchKind)> {
     // Mod namespaces in FML are often mixed-case (HardcoreEnderExpansion)
     // but asset directories are lowercase. Try both.
     let candidates = candidate_keys(ns, local);

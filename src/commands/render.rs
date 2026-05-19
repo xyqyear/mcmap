@@ -15,8 +15,8 @@ use std::path::{Path, PathBuf};
 use super::util::{Rectangle, auto_size, parse_region_filename};
 use crate::anvil::legacy::LegacyTopShadeRenderer;
 use crate::anvil::{
-    AnyPalette, CCoord, HeightMode, RCoord, RegionFileLoader, RegionMap, TopShadeRenderer,
-    palette, region::RegionLoader, render_region,
+    AnyPalette, CCoord, HeightMode, RCoord, RegionFileLoader, RegionMap, TopShadeRenderer, palette,
+    region::RegionLoader, render_region,
 };
 use crate::chown;
 use crate::output::emit_if_json;
@@ -227,7 +227,11 @@ pub fn execute(args: RenderArgs) -> Result<()> {
             info!("Loading regions from directory: {}", path.display());
             let loader = RegionFileLoader::new(path.clone());
             let dir_coords = loader.list()?;
-            info!("Found {} region files in {}", dir_coords.len(), path.display());
+            info!(
+                "Found {} region files in {}",
+                dir_coords.len(),
+                path.display()
+            );
             for (x, z) in dir_coords {
                 entries_map.insert((x.0, z.0), path.clone());
             }
@@ -267,10 +271,18 @@ pub fn execute(args: RenderArgs) -> Result<()> {
     if args.split {
         let out_dir = args.output.clone();
         std::fs::create_dir_all(&out_dir).map_err(|e| {
-            format!("Failed to create output directory {}: {}", out_dir.display(), e)
+            format!(
+                "Failed to create output directory {}: {}",
+                out_dir.display(),
+                e
+            )
         })?;
         chown::apply(&out_dir).map_err(|e| {
-            format!("Failed to chown output directory {}: {}", out_dir.display(), e)
+            format!(
+                "Failed to chown output directory {}: {}",
+                out_dir.display(),
+                e
+            )
         })?;
 
         emit_if_json(&PhaseEvent {
@@ -296,8 +308,7 @@ pub fn execute(args: RenderArgs) -> Result<()> {
                             .save(&path)
                             .map_err(|e| format!("save failed: {}", e))
                             .and_then(|()| {
-                                chown::apply(&path)
-                                    .map_err(|e| format!("chown failed: {}", e))
+                                chown::apply(&path).map_err(|e| format!("chown failed: {}", e))
                             });
                         match save_then_chown {
                             Ok(()) => {
@@ -385,7 +396,12 @@ pub fn execute(args: RenderArgs) -> Result<()> {
     let bounds = auto_size(&coords).ok_or("Failed to calculate bounds")?;
     info!("Bounds: {:?}", bounds);
 
-    let Rectangle { xmin, xmax, zmin, zmax } = bounds;
+    let Rectangle {
+        xmin,
+        xmax,
+        zmin,
+        zmax,
+    } = bounds;
     emit_if_json(&PhaseEvent {
         ty: "progress",
         phase: "regions_listed",

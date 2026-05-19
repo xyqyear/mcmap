@@ -19,9 +19,9 @@ use std::fs;
 use std::io::Read;
 use std::path::Path;
 
-use super::dim::{folder_to_relative, resolve_legacy};
-use super::output::{Claim, DimensionEntry, Member, Output, SCHEMA_VERSION, Team, TeamType};
+use super::output::{Claim, Member, Output, SCHEMA_VERSION, Team, TeamType};
 use super::uuid_util;
+use crate::commands::dim::{DimensionEntry, entry_for_legacy};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -157,14 +157,7 @@ pub fn run(world_dir: &Path) -> Result<Output> {
 
     let dimensions: Vec<DimensionEntry> = all_dims
         .keys()
-        .map(|&dim| {
-            let (folder, exists) = resolve_legacy(world_dir, dim);
-            DimensionEntry {
-                id: dim.to_string(),
-                folder: folder_to_relative(world_dir, &folder),
-                exists,
-            }
-        })
+        .map(|&dim| entry_for_legacy(world_dir, dim))
         .collect();
 
     Ok(Output {

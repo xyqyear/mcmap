@@ -33,12 +33,7 @@ impl<'a> LegacyTopShadeRenderer<'a> {
         Self { palette, format }
     }
 
-    fn render_column(
-        &self,
-        chunk: &LegacyChunkData,
-        x: usize,
-        z: usize,
-    ) -> (Rgba, i32) {
+    fn render_column(&self, chunk: &LegacyChunkData, x: usize, z: usize) -> (Rgba, i32) {
         // HeightMap is "Y of first skylit block" — i.e. one above the top
         // opaque block. Subtract one to start at that top block. If the
         // heightmap is absent or obviously bogus, fall back to scanning from
@@ -86,9 +81,7 @@ impl<'a> RenderEngine for LegacyTopShadeRenderer<'a> {
             PaletteFormat::Forge112 => chunk_forge112::from_bytes(bytes),
             // Modern shouldn't reach the legacy engine at all (the dispatcher
             // routes elsewhere), but treating it like 1.7.10 here is safe.
-            PaletteFormat::Legacy17 | PaletteFormat::Modern => {
-                LegacyChunkData::from_bytes(bytes)
-            }
+            PaletteFormat::Legacy17 | PaletteFormat::Modern => LegacyChunkData::from_bytes(bytes),
         }?;
         Ok(Some(decoded))
     }

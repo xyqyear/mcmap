@@ -133,11 +133,23 @@ pub fn from_bytes(data: &[u8]) -> Result<LegacyChunkData, String> {
 }
 
 fn decode_section(sec: SectionNbt) -> Result<Option<LegacySection>, String> {
-    let SectionNbt { y, blocks, add, data, palette } = sec;
+    let SectionNbt {
+        y,
+        blocks,
+        add,
+        data,
+        palette,
+    } = sec;
 
     let blocks = match blocks {
         Some(b) if b.len() == SECTION_BLOCKS => b,
-        Some(b) => return Err(format!("Blocks length {} (expected {})", b.len(), SECTION_BLOCKS)),
+        Some(b) => {
+            return Err(format!(
+                "Blocks length {} (expected {})",
+                b.len(),
+                SECTION_BLOCKS
+            ));
+        }
         // No Blocks at all: treat as all-air. Reasonable for legacy "section
         // omitted" semantics; REI always writes Blocks alongside Palette.
         None => return Ok(None),

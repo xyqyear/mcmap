@@ -102,8 +102,7 @@ pub fn read_slot(
 ) -> Result<SlotState> {
     let loc_off = slot * 4;
     let loc = &bytes[loc_off..loc_off + 4];
-    let sector_offset =
-        ((loc[0] as u32) << 16) | ((loc[1] as u32) << 8) | (loc[2] as u32);
+    let sector_offset = ((loc[0] as u32) << 16) | ((loc[1] as u32) << 8) | (loc[2] as u32);
     let sector_count = loc[3];
     if sector_offset == 0 || sector_count == 0 {
         return Ok(SlotState::Empty);
@@ -127,19 +126,21 @@ pub fn read_slot(
     }
 
     let ts_off = SECTOR_BYTES + slot * 4;
-    let timestamp =
-        u32::from_be_bytes(bytes[ts_off..ts_off + 4].try_into().unwrap());
+    let timestamp = u32::from_be_bytes(bytes[ts_off..ts_off + 4].try_into().unwrap());
 
     let record_off = (sector_offset as usize) * SECTOR_BYTES;
     if record_off + 5 > bytes.len() {
         warn!(
             "{}: chunk at ({}, {}) header extends past end of file (sector_offset={}, file_len={}); treating as empty",
-            side, x, z, sector_offset, bytes.len()
+            side,
+            x,
+            z,
+            sector_offset,
+            bytes.len()
         );
         return Ok(SlotState::Empty);
     }
-    let length =
-        u32::from_be_bytes(bytes[record_off..record_off + 4].try_into().unwrap());
+    let length = u32::from_be_bytes(bytes[record_off..record_off + 4].try_into().unwrap());
     let scheme = bytes[record_off + 4];
     if length < 1 {
         warn!(
@@ -199,7 +200,11 @@ pub fn read_slot(
         if end > bytes.len() {
             warn!(
                 "{}: chunk at ({}, {}) payload extends past end of file (claimed {} payload bytes, file_len={}); treating as empty",
-                side, x, z, payload_len, bytes.len()
+                side,
+                x,
+                z,
+                payload_len,
+                bytes.len()
             );
             return Ok(SlotState::Empty);
         }
@@ -313,10 +318,7 @@ fn write_atomic(tmp: &Path, dst: &Path, bytes: &[u8]) -> Result<()> {
 ///   1. Write all new/replacement `.mcc` files (tmp + fsync + rename).
 ///   2. Atomic-rename the new target `.mca` over the old one.
 ///   3. Delete stale `.mcc` files.
-pub fn apply_slot_mutations(
-    target: &Path,
-    mutations: &[(usize, SlotState)],
-) -> Result<()> {
+pub fn apply_slot_mutations(target: &Path, mutations: &[(usize, SlotState)]) -> Result<()> {
     let target_region = region_coords(target);
     let target_dir = target.parent().unwrap_or(Path::new(""));
 
@@ -324,7 +326,14 @@ pub fn apply_slot_mutations(
         Ok(ref b) if !is_placeholder_region(b) => {
             let mut v = Vec::with_capacity(SLOT_COUNT);
             for slot in 0..SLOT_COUNT {
-                v.push(read_slot(b, slot, target_dir, target_region, false, "target")?);
+                v.push(read_slot(
+                    b,
+                    slot,
+                    target_dir,
+                    target_region,
+                    false,
+                    "target",
+                )?);
             }
             (v, false)
         }
@@ -377,9 +386,7 @@ pub fn apply_slot_mutations(
         }
     }
 
-    if target_was_placeholder
-        && target_slots.iter().all(|s| matches!(s, SlotState::Empty))
-    {
+    if target_was_placeholder && target_slots.iter().all(|s| matches!(s, SlotState::Empty)) {
         // Nothing to materialize. Leaving a 0-byte vanilla placeholder alone
         // (or never creating a missing target) is the right outcome — see
         // `is_placeholder_region` for the parity argument with vanilla. The
@@ -397,12 +404,9 @@ pub fn apply_slot_mutations(
         write_atomic(&tmp_path, &final_path, bytes)?;
     }
 
-    let target_name = target
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| -> Box<dyn std::error::Error> {
-            "target has no file name component".into()
-        })?;
+    let target_name = target.file_name().and_then(|n| n.to_str()).ok_or_else(
+        || -> Box<dyn std::error::Error> { "target has no file name component".into() },
+    )?;
     let tmp_target = target_dir.join(format!("{}.tmp", target_name));
     write_atomic(&tmp_target, target, &out_bytes)?;
 
@@ -412,12 +416,9 @@ pub fn apply_slot_mutations(
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => {
-                return Err(format!(
-                    "failed to delete stale .mcc {}: {}",
-                    path.display(),
-                    e
-                )
-                .into());
+                return Err(
+                    format!("failed to delete stale .mcc {}: {}", path.display(), e).into(),
+                );
             }
         }
     }
@@ -697,7 +698,8 @@ mod tests {
         // header sectors. Mirror that: sector_offset = 1 (i.e., into the
         // timestamp table) must be treated as empty, never read as a chunk.
         let bytes = header_with_slot(0, 0, 1, 1);
-        let state = read_slot(&bytes, slot_index(0, 0), Path::new(""), None, false, "test").unwrap();
+        let state =
+            read_slot(&bytes, slot_index(0, 0), Path::new(""), None, false, "test").unwrap();
         assert!(matches!(state, SlotState::Empty), "got {:?}", state);
     }
 
@@ -706,7 +708,8 @@ mod tests {
         // Header points to a sector past EOF. mcmap previously errored out;
         // vanilla returns null. Match vanilla.
         let bytes = header_with_slot(5, 7, 99, 1);
-        let state = read_slot(&bytes, slot_index(5, 7), Path::new(""), None, false, "test").unwrap();
+        let state =
+            read_slot(&bytes, slot_index(5, 7), Path::new(""), None, false, "test").unwrap();
         assert!(matches!(state, SlotState::Empty), "got {:?}", state);
     }
 
@@ -717,7 +720,8 @@ mod tests {
         let mut bytes = header_with_slot(1, 1, 2, 1);
         bytes.resize(3 * SECTOR_BYTES, 0); // 4096 bytes of chunk data, all zeros
         // length field at bytes[8192..8196] is already 0 -> invalid
-        let state = read_slot(&bytes, slot_index(1, 1), Path::new(""), None, false, "test").unwrap();
+        let state =
+            read_slot(&bytes, slot_index(1, 1), Path::new(""), None, false, "test").unwrap();
         assert!(matches!(state, SlotState::Empty), "got {:?}", state);
     }
 
@@ -729,10 +733,10 @@ mod tests {
         let mut bytes = header_with_slot(2, 3, 2, 1);
         bytes.resize(3 * SECTOR_BYTES, 0);
         // length = 99999 (way > 4096)
-        bytes[2 * SECTOR_BYTES..2 * SECTOR_BYTES + 4]
-            .copy_from_slice(&99999u32.to_be_bytes());
+        bytes[2 * SECTOR_BYTES..2 * SECTOR_BYTES + 4].copy_from_slice(&99999u32.to_be_bytes());
         bytes[2 * SECTOR_BYTES + 4] = 2; // scheme = zlib
-        let state = read_slot(&bytes, slot_index(2, 3), Path::new(""), None, false, "test").unwrap();
+        let state =
+            read_slot(&bytes, slot_index(2, 3), Path::new(""), None, false, "test").unwrap();
         assert!(matches!(state, SlotState::Empty), "got {:?}", state);
     }
 
@@ -747,10 +751,10 @@ mod tests {
         // sector that we deliberately won't write); within the 8192-byte
         // reservation, so the length-field check passes.
         bytes.resize(2 * SECTOR_BYTES + 4096, 0); // only one payload sector on disk
-        bytes[2 * SECTOR_BYTES..2 * SECTOR_BYTES + 4]
-            .copy_from_slice(&5000u32.to_be_bytes());
+        bytes[2 * SECTOR_BYTES..2 * SECTOR_BYTES + 4].copy_from_slice(&5000u32.to_be_bytes());
         bytes[2 * SECTOR_BYTES + 4] = 2;
-        let state = read_slot(&bytes, slot_index(4, 5), Path::new(""), None, false, "test").unwrap();
+        let state =
+            read_slot(&bytes, slot_index(4, 5), Path::new(""), None, false, "test").unwrap();
         assert!(matches!(state, SlotState::Empty), "got {:?}", state);
     }
 
@@ -781,13 +785,25 @@ mod tests {
         // After apply, the corrupt slot is gone (zeroed in re-emit) and the
         // mutation slot is present.
         let after = std::fs::read(&target).unwrap();
-        let corrupt =
-            read_slot(&after, slot_index(10, 10), dir.path(), region_coords(&target), false, "after")
-                .unwrap();
+        let corrupt = read_slot(
+            &after,
+            slot_index(10, 10),
+            dir.path(),
+            region_coords(&target),
+            false,
+            "after",
+        )
+        .unwrap();
         assert!(matches!(corrupt, SlotState::Empty));
-        let mutated =
-            read_slot(&after, slot_index(3, 4), dir.path(), region_coords(&target), false, "after")
-                .unwrap();
+        let mutated = read_slot(
+            &after,
+            slot_index(3, 4),
+            dir.path(),
+            region_coords(&target),
+            false,
+            "after",
+        )
+        .unwrap();
         assert!(matches!(mutated, SlotState::Inline { .. }));
     }
 }

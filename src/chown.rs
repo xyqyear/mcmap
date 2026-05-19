@@ -44,10 +44,7 @@ pub fn parse_spec(s: &str) -> Result<ChownSpec, String> {
     let gid = match gid_part {
         None => None,
         Some(g) if g.is_empty() => {
-            return Err(format!(
-                "--chown {:?}: group is empty after ':'",
-                trimmed
-            ));
+            return Err(format!("--chown {:?}: group is empty after ':'", trimmed));
         }
         Some(g) => Some(resolve_group(g)?),
     };
@@ -132,7 +129,10 @@ mod tests {
     fn parses_uid_only() {
         assert_eq!(
             parse_spec("1000").unwrap(),
-            ChownSpec { uid: Some(1000), gid: None }
+            ChownSpec {
+                uid: Some(1000),
+                gid: None
+            }
         );
     }
 
@@ -140,7 +140,10 @@ mod tests {
     fn parses_uid_gid() {
         assert_eq!(
             parse_spec("1000:2000").unwrap(),
-            ChownSpec { uid: Some(1000), gid: Some(2000) }
+            ChownSpec {
+                uid: Some(1000),
+                gid: Some(2000)
+            }
         );
     }
 
@@ -148,7 +151,10 @@ mod tests {
     fn parses_gid_only() {
         assert_eq!(
             parse_spec(":2000").unwrap(),
-            ChownSpec { uid: None, gid: Some(2000) }
+            ChownSpec {
+                uid: None,
+                gid: Some(2000)
+            }
         );
     }
 

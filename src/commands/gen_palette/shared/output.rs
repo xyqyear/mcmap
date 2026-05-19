@@ -28,8 +28,7 @@ impl PaletteOutput<'_> {
             Self::Legacy(f) => serde_json::to_vec_pretty(f)?,
         };
         std::fs::write(path, &bytes)?;
-        chown::apply(path)
-            .map_err(|e| format!("Failed to chown {}: {}", path.display(), e))?;
+        chown::apply(path).map_err(|e| format!("Failed to chown {}: {}", path.display(), e))?;
         Ok(())
     }
 

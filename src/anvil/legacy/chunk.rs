@@ -169,8 +169,7 @@ pub struct LegacyChunkData {
 
 impl LegacyChunkData {
     pub fn from_bytes(data: &[u8]) -> Result<Self, String> {
-        let root: ChunkRoot =
-            fastnbt::from_bytes(data).map_err(|e| format!("NBT parse: {}", e))?;
+        let root: ChunkRoot = fastnbt::from_bytes(data).map_err(|e| format!("NBT parse: {}", e))?;
         let level = root.level;
 
         let mut sections: [Option<LegacySection>; 16] = Default::default();

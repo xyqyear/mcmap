@@ -257,10 +257,7 @@ fn load_archive(path: &Path, pools: &mut Pools) -> Result<()> {
     load_archive_from_reader(&label, file, pools)
 }
 
-pub fn load_packs<F: FnMut(&PackLoadReport)>(
-    paths: &[PathBuf],
-    mut on_pack: F,
-) -> Result<Pools> {
+pub fn load_packs<F: FnMut(&PackLoadReport)>(paths: &[PathBuf], mut on_pack: F) -> Result<Pools> {
     let archives = expand_packs(paths)?;
     if archives.is_empty() {
         return Err("No pack files to load (did you pass empty directories?)".into());
@@ -414,12 +411,24 @@ mod tests {
     #[test]
     fn leaves_clean_chain_alone() {
         let mut models = HashMap::new();
-        models.insert("ns:block/leaf".to_string(), empty_model(Some("ns:block/mid")));
-        models.insert("ns:block/mid".to_string(), empty_model(Some("ns:block/root")));
+        models.insert(
+            "ns:block/leaf".to_string(),
+            empty_model(Some("ns:block/mid")),
+        );
+        models.insert(
+            "ns:block/mid".to_string(),
+            empty_model(Some("ns:block/root")),
+        );
         models.insert("ns:block/root".to_string(), empty_model(None));
         break_model_parent_cycles(&mut models);
-        assert_eq!(models["ns:block/leaf"].parent.as_deref(), Some("ns:block/mid"));
-        assert_eq!(models["ns:block/mid"].parent.as_deref(), Some("ns:block/root"));
+        assert_eq!(
+            models["ns:block/leaf"].parent.as_deref(),
+            Some("ns:block/mid")
+        );
+        assert_eq!(
+            models["ns:block/mid"].parent.as_deref(),
+            Some("ns:block/root")
+        );
         assert_eq!(models["ns:block/root"].parent, None);
     }
 

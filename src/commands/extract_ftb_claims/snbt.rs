@@ -16,9 +16,9 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::dim::{folder_to_relative, resolve_modern};
-use super::output::{Claim, DimensionEntry, Member, Output, SCHEMA_VERSION, Team, TeamType};
+use super::output::{Claim, Member, Output, SCHEMA_VERSION, Team, TeamType};
 use super::snbt_parser::{SnbtValue, parse};
+use crate::commands::dim::{DimensionEntry, entry_for_modern};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -48,7 +48,12 @@ pub fn run(world_dir: &Path) -> Result<Output> {
             continue;
         }
         let (name, team_type, members, owner) = match team_meta.get(&team_id) {
-            Some(m) => (m.name.clone(), m.team_type, m.members.clone(), m.owner.clone()),
+            Some(m) => (
+                m.name.clone(),
+                m.team_type,
+                m.members.clone(),
+                m.owner.clone(),
+            ),
             None => (None, TeamType::Unknown, Vec::new(), None),
         };
         teams.push(Team {
@@ -63,15 +68,7 @@ pub fn run(world_dir: &Path) -> Result<Output> {
 
     let dimensions: Vec<DimensionEntry> = all_dims
         .keys()
-        .map(|id| {
-            let folder = resolve_modern(world_dir, id);
-            let exists = folder.join("region").is_dir();
-            DimensionEntry {
-                id: id.clone(),
-                folder: folder_to_relative(world_dir, &folder),
-                exists,
-            }
-        })
+        .map(|id| entry_for_modern(world_dir, id))
         .collect();
 
     Ok(Output {

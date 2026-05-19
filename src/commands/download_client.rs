@@ -162,17 +162,10 @@ pub fn execute(args: DownloadClientArgs) -> Result<()> {
     });
 
     info!("Fetching per-version metadata for {}", entry.id);
-    let version_json: VersionJson = http
-        .get(&entry.url)
-        .send()?
-        .error_for_status()?
-        .json()?;
+    let version_json: VersionJson = http.get(&entry.url).send()?.error_for_status()?.json()?;
 
     let meta = &version_json.downloads.client;
-    info!(
-        "Client jar: {} bytes, sha1 {}",
-        meta.size, meta.sha1
-    );
+    info!("Client jar: {} bytes, sha1 {}", meta.size, meta.sha1);
     emit_if_json(&DownloadInfoEvent {
         ty: "progress",
         phase: "download_info",

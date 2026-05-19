@@ -14,7 +14,6 @@
 // `D:\temp\ftb-claim-research\` (not committed; not required to build).
 
 mod detect;
-mod dim;
 mod latmod_json;
 mod output;
 mod per_team_nbt;

@@ -12,8 +12,8 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 use super::region_io::{
-    SlotState, apply_slot_mutations, is_placeholder_region, parse_chunks, read_slot,
-    region_coords, slot_index,
+    SlotState, apply_slot_mutations, is_placeholder_region, parse_chunks, read_slot, region_coords,
+    slot_index,
 };
 use crate::output::{emit, is_json};
 
@@ -80,7 +80,14 @@ pub fn execute(args: ReplaceChunksArgs) -> Result<()> {
         let state = if source_is_placeholder {
             SlotState::Empty
         } else {
-            read_slot(&source_bytes, slot, source_dir, source_region, true, "source")?
+            read_slot(
+                &source_bytes,
+                slot,
+                source_dir,
+                source_region,
+                true,
+                "source",
+            )?
         };
         let kind = match &state {
             SlotState::Empty => "empty",
