@@ -76,6 +76,7 @@ class ServerInstance:
         self.work_dir.mkdir(parents=True, exist_ok=True)
         self.log_path = work_dir / "server.log"
         self.proc: subprocess.Popen[str] | None = None
+        self.port: int | None = None
         self._log_buffer: list[str] = []
         self._lock = threading.Lock()
         self._cmd_seq = itertools.count()
@@ -234,16 +235,20 @@ class ServerInstance:
         # No RCON: commands flow over stdin. server-port still has to be
         # bound by the JVM (Minecraft refuses to boot otherwise) so we pick
         # a free ephemeral port for it.
+        self.port = _free_port()
         props = {
             "online-mode": "false",
-            "server-port": str(_free_port()),
+            "server-port": str(self.port),
+            "allow-flight": "true",
+            "network-compression-threshold": "-1",
             "view-distance": "3",
+            "simulation-distance": "3",
             "spawn-protection": "0",
             "gamemode": "1",
             "default-gamemode": "creative",
             "difficulty": "peaceful",
             "spawn-monsters": "false",
-            "spawn-animals": "false",
+            "spawn-animals": "true",
             "spawn-npcs": "false",
             "generate-structures": "false",
             "level-seed": "mcmap-test",
@@ -379,6 +384,35 @@ class ServerInstance:
             return True
         except AssertionError:
             return False
+
+    def teleport_player(self, player: str, x: float, y: float, z: float) -> str:
+        return self.cmd(f"tp {player} {x:g} {y:g} {z:g}")
+
+    def set_player_survival(self, player: str) -> str:
+        if self.flavor.mc_version in LEGACY_VERSIONS:
+            return self.cmd(f"gamemode 0 {player}")
+        return self.cmd(f"gamemode survival {player}")
+
+    def gametime(self) -> int:
+        reply = self.cmd("time query gametime")
+        match = re.search(r"\b(?:game\s+)?time\s+is\s+(-?\d+)\b", reply, re.IGNORECASE)
+        if match is None:
+            raise AssertionError(f"could not parse gametime from reply: {reply!r}")
+        return int(match.group(1))
+
+    def wait_ticks(self, ticks: int) -> None:
+        try:
+            start = self.gametime()
+        except AssertionError:
+            time.sleep(ticks / 20.0)
+            return
+        target = start + ticks
+        deadline = time.monotonic() + max(30.0, ticks / 20.0 + 20.0)
+        while time.monotonic() < deadline:
+            if self.gametime() >= target:
+                return
+            time.sleep(0.1)
+        raise TimeoutError(f"server gametime did not advance by {ticks} ticks")
 
     # -- Save / stop --------------------------------------------------------
 
