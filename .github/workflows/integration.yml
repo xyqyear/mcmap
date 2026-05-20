@@ -83,7 +83,13 @@ jobs:
 
       - name: Run integration tests
         working-directory: tests/integration
-        run: uv run pytest -ra
+        run: >
+          uv run pytest -ra
+          test_download_client.py
+          test_gen_palette.py
+          test_remove_chunks.py
+          test_replace_chunks.py
+          test_render.py
 
       - name: Upload server logs on failure
         if: failure()

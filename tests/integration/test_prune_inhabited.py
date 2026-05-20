@@ -24,6 +24,7 @@ LEGACY_LOW_WAIT_TICKS = 60
 
 PLAYER_CHUNK = (0, 0)
 DISTANT_CHUNK = (20, 0)
+LOW_REGION_CHUNK = (40, 0)
 DIMENSION_FOLDERS = [
     Path("DIM-1"),
     Path("dimensions") / "mcmap" / "test",
@@ -73,6 +74,7 @@ def _vanilla_prune_flavor(version: str) -> Flavor:
 
 MODERN_PRUNE_FLAVORS = [_vanilla_prune_flavor(v) for v in MODERN_PRUNE_VERSIONS]
 LEGACY_PRUNE_FLAVORS = [_vanilla_prune_flavor(v) for v in LEGACY_PRUNE_VERSIONS]
+ALL_PRUNE_FLAVORS = MODERN_PRUNE_FLAVORS + LEGACY_PRUNE_FLAVORS
 
 
 def _work_dir_for(request: pytest.FixtureRequest, run_root: Path, flavor: Flavor) -> Path:
@@ -112,6 +114,20 @@ def legacy_work_dir(
     return _work_dir_for(request, run_root, legacy_prune_flavor)
 
 
+@pytest.fixture(params=ALL_PRUNE_FLAVORS, ids=lambda f: f.id)
+def prune_flavor(request: pytest.FixtureRequest) -> Flavor:
+    return request.param
+
+
+@pytest.fixture
+def prune_work_dir(
+    request: pytest.FixtureRequest,
+    run_root: Path,
+    prune_flavor: Flavor,
+) -> Path:
+    return _work_dir_for(request, run_root, prune_flavor)
+
+
 def _marker_pos(chunk: tuple[int, int]) -> tuple[int, int, int]:
     cx, cz = chunk
     return cx * 16 + 1, Y, cz * 16 + 1
@@ -149,11 +165,23 @@ def _region_file_for_chunk(work_dir: Path, chunk: tuple[int, int]) -> Path:
     return region_file
 
 
-def _copy_region_to_dimensions(work_dir: Path, region_file: Path) -> None:
+def _copy_region_to_dimensions(work_dir: Path, region_file: Path) -> list[Path]:
+    copied = []
     for folder in DIMENSION_FOLDERS:
         target_dir = work_dir / "world" / folder / "region"
         target_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(region_file, target_dir / region_file.name)
+        target = target_dir / region_file.name
+        shutil.copy2(region_file, target)
+        copied.append(target)
+    return copied
+
+
+def _assert_region_files_match(reference: Path, copies: list[Path]) -> None:
+    expected = reference.read_bytes()
+    for copy in copies:
+        assert copy.read_bytes() == expected, (
+            f"copied dimension region {copy} differs from {reference}"
+        )
 
 
 def _pruned_chunks(events: list[dict]) -> set[tuple[int, int]]:
@@ -176,6 +204,14 @@ def _pruned_chunk_events(
         and int(ev["chunk_x"]) == cx
         and int(ev["chunk_z"]) == cz
     ]
+
+
+def _pruned_regions(events: list[dict]) -> set[tuple[int, int]]:
+    return {
+        (int(ev["region_x"]), int(ev["region_z"]))
+        for ev in events
+        if ev.get("type") == "region_pruned"
+    }
 
 
 def _event_region_path(event: dict) -> str:
@@ -225,6 +261,7 @@ def _run_prune(
     work_dir: Path,
     *,
     threshold: int = THRESHOLD,
+    mode: str = "chunks",
     dry_run: bool = False,
 ) -> list[dict]:
     args = [
@@ -233,14 +270,14 @@ def _run_prune(
         "--threshold",
         str(threshold),
         "--mode",
-        "chunks",
+        mode,
     ]
     if dry_run:
         args.append("--dry-run")
     events, rc = run_mcmap_json(args)
     assert rc == 0, f"prune-inhabited failed: {events!r}"
     result = assert_result(events)
-    assert result["mode"] == "chunks"
+    assert result["mode"] == mode
     assert result["dry_run"] is dry_run
     return events
 
@@ -258,12 +295,12 @@ def test_prune_inhabited_keeps_player_chunk_and_prunes_distant_chunk(
             _place_loaded_marker(srv, PLAYER_CHUNK, HIGH_BLOCK)
             srv.wait_ticks(HIGH_WAIT_TICKS)
 
-    _copy_region_to_dimensions(
-        modern_work_dir,
-        _region_file_for_chunk(modern_work_dir, DISTANT_CHUNK),
-    )
+    region_file = _region_file_for_chunk(modern_work_dir, DISTANT_CHUNK)
+    dimension_regions = _copy_region_to_dimensions(modern_work_dir, region_file)
+    _assert_region_files_match(region_file, dimension_regions)
 
     events = _run_prune(modern_work_dir)
+    _assert_region_files_match(region_file, dimension_regions)
     pruned = _pruned_chunks(events)
     assert DISTANT_CHUNK in pruned, f"distant chunk was not pruned: {events!r}"
     assert PLAYER_CHUNK not in pruned, (
@@ -316,6 +353,43 @@ def test_prune_inhabited_dry_run_keeps_world(
             _verify_marker(srv, PLAYER_CHUNK, HIGH_BLOCK, present=True)
 
 
+def test_prune_inhabited_region_mode_prunes_only_all_low_regions(
+    prune_work_dir: Path,
+    prune_flavor: Flavor,
+) -> None:
+    legacy = prune_flavor.mc_version in LEGACY_PRUNE_VERSIONS
+    with ServerInstance(prune_flavor, prune_work_dir) as srv:
+        assert srv.port is not None
+        with MinecraftClient("127.0.0.1", srv.port, BOT):
+            srv.set_player_survival(BOT)
+            if legacy:
+                _load_with_player(srv, LOW_REGION_CHUNK)
+                srv.wait_ticks(LEGACY_LOW_WAIT_TICKS)
+            _place_loaded_marker(srv, LOW_REGION_CHUNK, LOW_BLOCK)
+            _load_with_player(srv, PLAYER_CHUNK)
+            _place_loaded_marker(srv, PLAYER_CHUNK, HIGH_BLOCK)
+            srv.wait_ticks(HIGH_WAIT_TICKS)
+
+    threshold = LEGACY_THRESHOLD if legacy else THRESHOLD
+    events = _run_prune(prune_work_dir, threshold=threshold, mode="regions")
+    pruned = _pruned_regions(events)
+    assert _region_of(LOW_REGION_CHUNK) in pruned, (
+        f"low-only region was not pruned: {events!r}"
+    )
+    assert _region_of(PLAYER_CHUNK) not in pruned, (
+        f"region containing high player chunk was pruned: {events!r}"
+    )
+
+    with ServerInstance(prune_flavor, prune_work_dir) as srv:
+        assert srv.port is not None
+        with MinecraftClient("127.0.0.1", srv.port, BOT):
+            srv.set_player_survival(BOT)
+            _verify_marker(srv, LOW_REGION_CHUNK, LOW_BLOCK, present=False)
+            _verify_marker(srv, PLAYER_CHUNK, HIGH_BLOCK, present=True)
+            for chunk in [LOW_REGION_CHUNK, PLAYER_CHUNK]:
+                _verify_writable(srv, chunk)
+
+
 def test_prune_inhabited_legacy_keeps_player_chunk_and_prunes_distant_chunk(
     legacy_work_dir: Path,
     legacy_prune_flavor: Flavor,
@@ -331,12 +405,12 @@ def test_prune_inhabited_legacy_keeps_player_chunk_and_prunes_distant_chunk(
             _load_with_player(srv, PLAYER_CHUNK)
             srv.wait_ticks(HIGH_WAIT_TICKS)
 
-    _copy_region_to_dimensions(
-        legacy_work_dir,
-        _region_file_for_chunk(legacy_work_dir, DISTANT_CHUNK),
-    )
+    region_file = _region_file_for_chunk(legacy_work_dir, DISTANT_CHUNK)
+    dimension_regions = _copy_region_to_dimensions(legacy_work_dir, region_file)
+    _assert_region_files_match(region_file, dimension_regions)
 
     events = _run_prune(legacy_work_dir, threshold=LEGACY_THRESHOLD)
+    _assert_region_files_match(region_file, dimension_regions)
     pruned = _pruned_chunks(events)
     assert DISTANT_CHUNK in pruned, f"legacy distant chunk was not pruned: {events!r}"
     assert PLAYER_CHUNK not in pruned, (
