@@ -13,7 +13,7 @@ jobs:
     name: Build mcmap binary
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -25,7 +25,7 @@ jobs:
         run: cargo build --release
 
       - name: Upload mcmap binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mcmap-bin-prune-inhabited
           path: target/release/mcmap
@@ -62,10 +62,10 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download mcmap binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: mcmap-bin-prune-inhabited
           path: mcmap-bin
@@ -74,13 +74,13 @@ jobs:
         run: chmod +x "$MCMAP_BIN"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8.1.0
         with:
           enable-cache: true
           cache-dependency-glob: tests/integration/pyproject.toml
 
       - name: Restore mcmap-test-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /tmp/mcmap-test-cache
           key: mcmap-prune-cache-${{ matrix.flavor }}-${{ hashFiles('tests/integration/cache.py', 'tests/integration/server.py', 'tests/integration/mcclient.py', 'tests/integration/test_prune_inhabited.py') }}
@@ -93,7 +93,7 @@ jobs:
 
       - name: Upload server logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: prune-server-logs-${{ matrix.flavor }}
           path: |

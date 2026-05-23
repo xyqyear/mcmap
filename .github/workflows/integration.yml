@@ -14,7 +14,7 @@ jobs:
     outputs:
       artifact-name: ${{ steps.upload.outputs.artifact-name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -27,7 +27,7 @@ jobs:
 
       - name: Upload mcmap binary
         id: upload
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mcmap-bin
           path: target/release/mcmap
@@ -56,10 +56,10 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download mcmap binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: mcmap-bin
           path: mcmap-bin
@@ -68,13 +68,13 @@ jobs:
         run: chmod +x "$MCMAP_BIN"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8.1.0
         with:
           enable-cache: true
           cache-dependency-glob: tests/integration/pyproject.toml
 
       - name: Restore mcmap-test-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /tmp/mcmap-test-cache
           key: mcmap-test-cache-${{ matrix.flavor }}-${{ hashFiles('tests/integration/cache.py', 'tests/integration/flavors.py') }}
@@ -93,7 +93,7 @@ jobs:
 
       - name: Upload server logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: server-logs-${{ matrix.flavor }}
           path: |
