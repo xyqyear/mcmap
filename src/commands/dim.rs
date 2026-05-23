@@ -16,18 +16,48 @@ pub struct DimensionEntry {
     pub exists: bool,
 }
 
-/// 1.16+ ResourceLocation -> folder. Returns the path; the caller computes
-/// `exists` separately so the output schema can flag missing folders.
+/// ResourceLocation -> folder. Vanilla dimensions probe the pre-26.1 layout
+/// first, then the 26.1+ `dimensions/minecraft/...` layout.
 pub fn resolve_modern(world_dir: &Path, dim_id: &str) -> PathBuf {
     match dim_id {
-        "minecraft:overworld" => world_dir.to_path_buf(),
-        "minecraft:the_nether" => world_dir.join("DIM-1"),
-        "minecraft:the_end" => world_dir.join("DIM1"),
+        "minecraft:overworld" => resolve_first_existing_region([
+            world_dir.to_path_buf(),
+            world_dir
+                .join("dimensions")
+                .join("minecraft")
+                .join("overworld"),
+        ]),
+        "minecraft:the_nether" => resolve_first_existing_region([
+            world_dir.join("DIM-1"),
+            world_dir
+                .join("dimensions")
+                .join("minecraft")
+                .join("the_nether"),
+        ]),
+        "minecraft:the_end" => resolve_first_existing_region([
+            world_dir.join("DIM1"),
+            world_dir
+                .join("dimensions")
+                .join("minecraft")
+                .join("the_end"),
+        ]),
         s => {
             let (ns, path) = s.split_once(':').unwrap_or(("minecraft", s));
             world_dir.join("dimensions").join(ns).join(path)
         }
     }
+}
+
+fn resolve_first_existing_region<const N: usize>(candidates: [PathBuf; N]) -> PathBuf {
+    let mut iter = candidates.into_iter();
+    let default = iter
+        .next()
+        .expect("dimension path candidates must not be empty");
+    if default.join("region").is_dir() {
+        return default;
+    }
+    iter.find(|path| path.join("region").is_dir())
+        .unwrap_or(default)
 }
 
 /// Pre-1.13 int dim id -> (folder, exists). Tries `DIM<N>/region/` first, then
@@ -135,6 +165,46 @@ mod tests {
             resolve_modern(&w, "allthemodium:mining"),
             w.join("dimensions/allthemodium/mining")
         );
+    }
+
+    #[test]
+    fn modern_vanilla_dims_fallback_to_namespaced_layout() {
+        let w = tmpdir();
+        fs::create_dir_all(w.join("dimensions/minecraft/overworld/region")).unwrap();
+        fs::create_dir_all(w.join("dimensions/minecraft/the_nether/region")).unwrap();
+        fs::create_dir_all(w.join("dimensions/minecraft/the_end/region")).unwrap();
+
+        assert_eq!(
+            resolve_modern(&w, "minecraft:overworld"),
+            w.join("dimensions/minecraft/overworld")
+        );
+        assert_eq!(
+            resolve_modern(&w, "minecraft:the_nether"),
+            w.join("dimensions/minecraft/the_nether")
+        );
+        assert_eq!(
+            resolve_modern(&w, "minecraft:the_end"),
+            w.join("dimensions/minecraft/the_end")
+        );
+
+        let _ = fs::remove_dir_all(&w);
+    }
+
+    #[test]
+    fn modern_vanilla_dims_prefer_old_layout() {
+        let w = tmpdir();
+        fs::create_dir_all(w.join("region")).unwrap();
+        fs::create_dir_all(w.join("DIM-1/region")).unwrap();
+        fs::create_dir_all(w.join("DIM1/region")).unwrap();
+        fs::create_dir_all(w.join("dimensions/minecraft/overworld/region")).unwrap();
+        fs::create_dir_all(w.join("dimensions/minecraft/the_nether/region")).unwrap();
+        fs::create_dir_all(w.join("dimensions/minecraft/the_end/region")).unwrap();
+
+        assert_eq!(resolve_modern(&w, "minecraft:overworld"), w);
+        assert_eq!(resolve_modern(&w, "minecraft:the_nether"), w.join("DIM-1"));
+        assert_eq!(resolve_modern(&w, "minecraft:the_end"), w.join("DIM1"));
+
+        let _ = fs::remove_dir_all(&w);
     }
 
     #[test]
