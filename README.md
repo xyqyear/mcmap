@@ -319,12 +319,28 @@ without changing files. Actual deletion uses the same region I/O as
 `remove-chunks`, including `.mcc` cleanup and matching `entities/` / `poi/`
 slots when those sibling files exist.
 
+`--exclude-ftb-claims <FILE|->` protects chunks claimed by
+`extract-ftb-claims`. The input may be the JSON file written by
+`extract-ftb-claims -o claims.json` or the NDJSON stream from
+`mcmap --json extract-ftb-claims`; pass `-` to read that stream from stdin.
+In chunk mode, claimed chunks are skipped while unclaimed low-activity chunks
+in the same region may still be removed. In region mode, any claim inside a
+region prevents that whole region from being removed.
+
 ```bash
 # Preview chunks with less than one minute of inhabited time
 mcmap prune-inhabited /srv/world --threshold 1200 --dry-run
 
 # Remove only whole regions where every present chunk is below the threshold
 mcmap prune-inhabited /srv/world --threshold 1200 --mode regions
+
+# Preserve FTB-claimed chunks while pruning low-activity chunks
+mcmap extract-ftb-claims --world /srv/world -o claims.json
+mcmap prune-inhabited /srv/world --threshold 1200 --exclude-ftb-claims claims.json
+
+# Or pipe the JSON-mode extractor result directly
+mcmap --json extract-ftb-claims --world /srv/world |
+    mcmap prune-inhabited /srv/world --threshold 1200 --exclude-ftb-claims -
 ```
 
 ## Performance

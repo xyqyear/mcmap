@@ -336,6 +336,12 @@ reads chunk `InhabitedTime`, and removes low-activity chunks. In JSON mode,
 `--dry-run` affects only mutation; the event stream has the same shape and
 sets `dry_run` accordingly.
 
+When `--exclude-ftb-claims <FILE|->` is passed, the input may be either the
+JSON document written by `extract-ftb-claims --output` or the NDJSON stream
+from `mcmap --json extract-ftb-claims`. In chunk mode, claimed chunks are
+removed from the prune set. In region mode, a whole-region candidate is
+skipped if any FTB claim falls inside that region.
+
 ### Event types
 
 Per discovered region directory:
@@ -367,6 +373,10 @@ When `--mode regions`, one event per selected region:
 | `chunks_scanned`   | Number of present chunk slots whose NBT was read. |
 | `chunks_selected`  | Number of chunks selected for removal. |
 | `regions_selected` | Number of regions with selected chunks, or whole regions selected in region mode. |
+| `claims_loaded` | Optional. Raw FTB claim count read from `--exclude-ftb-claims`. |
+| `claimed_chunks_protected` | Optional. Unique claimed chunk coordinates mapped to discovered region directories. |
+| `chunks_skipped_by_claims` | Optional. Otherwise-selected chunks left untouched because of FTB claims. In region mode this counts every present chunk in a skipped whole-region candidate. |
+| `regions_skipped_by_claims` | Optional. Whole-region candidates skipped because they contained an FTB claim. Always `0` in chunk mode. |
 
 ### Example
 
