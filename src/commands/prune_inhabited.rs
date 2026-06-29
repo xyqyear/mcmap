@@ -52,6 +52,12 @@ struct RegionDir {
 }
 
 #[derive(Clone, Debug)]
+struct RegionFileSet {
+    path: PathBuf,
+    files: Vec<PathBuf>,
+}
+
+#[derive(Clone, Debug)]
 struct RegionPlan {
     path: PathBuf,
     region_x: isize,
@@ -163,6 +169,15 @@ struct RegionEvent<'a> {
 }
 
 #[derive(Serialize)]
+struct ProgressEvent<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    phase: &'a str,
+    regions_processed: usize,
+    regions_total: usize,
+}
+
+#[derive(Serialize)]
 struct ResultEvent<'a> {
     #[serde(rename = "type")]
     ty: &'a str,
@@ -212,29 +227,34 @@ pub fn execute(args: PruneInhabitedArgs) -> Result<()> {
         );
     }
 
+    let region_file_sets = collect_region_file_sets(&region_dirs)?;
+    let regions_total: usize = region_file_sets.iter().map(|set| set.files.len()).sum();
+    for set in &region_file_sets {
+        if is_json() {
+            emit(&RegionDirEvent {
+                ty: "region_dir",
+                path: set.path.display().to_string(),
+                regions: set.files.len(),
+            });
+        }
+    }
+
+    let progress_phase = if args.dry_run { "scan" } else { "prune" };
     let mut regions_scanned = 0usize;
+    let mut regions_processed = 0usize;
     let mut chunks_scanned = 0usize;
     let mut chunks_selected = 0usize;
     let mut selected_region_count = 0usize;
     let mut chunks_skipped_by_claims = 0usize;
     let mut regions_skipped_by_claims = 0usize;
-    let mut all_plans = Vec::new();
 
-    for dir in &region_dirs {
-        let region_files = list_region_files(&dir.path)?;
-        let region_dir_key = canonicalize_existing(&dir.path);
+    for set in &region_file_sets {
+        let region_dir_key = canonicalize_existing(&set.path);
         let protected_chunks = claim_protection
             .as_ref()
             .and_then(|p| p.by_region_dir.get(&region_dir_key));
-        if is_json() {
-            emit(&RegionDirEvent {
-                ty: "region_dir",
-                path: dir.path.display().to_string(),
-                regions: region_files.len(),
-            });
-        }
 
-        for region_path in region_files {
+        for region_path in &set.files {
             match plan_region(&region_path, args.threshold, args.mode, protected_chunks) {
                 Ok(Some(plan)) => {
                     regions_scanned += 1;
@@ -244,14 +264,19 @@ pub fn execute(args: PruneInhabitedArgs) -> Result<()> {
                     if plan.region_skipped_by_claims {
                         regions_skipped_by_claims += 1;
                     }
-                    if args.mode == PruneMode::Regions && !plan.prune_slots.is_empty() {
+                    if !plan.prune_slots.is_empty() {
                         selected_region_count += 1;
+                        emit_or_print_plan(&plan, args.mode, args.dry_run);
+                        if !args.dry_run {
+                            apply_plan(&plan)?;
+                        }
                     }
-                    all_plans.push(plan);
                 }
                 Ok(None) => regions_scanned += 1,
                 Err(e) => warn!("{}: {}", region_path.display(), e),
             }
+            regions_processed += 1;
+            emit_progress(progress_phase, regions_processed, regions_total);
         }
     }
 
@@ -261,61 +286,6 @@ pub fn execute(args: PruneInhabitedArgs) -> Result<()> {
             "Skipped {} chunks and {} regions because of FTB claims",
             chunks_skipped_by_claims, regions_skipped_by_claims
         );
-    }
-
-    if args.mode == PruneMode::Chunks {
-        selected_region_count = all_plans
-            .iter()
-            .filter(|p| !p.prune_slots.is_empty())
-            .count();
-    }
-
-    for plan in &all_plans {
-        if plan.prune_slots.is_empty() {
-            continue;
-        }
-
-        if is_json() {
-            match args.mode {
-                PruneMode::Chunks => {
-                    for chunk in &plan.prune_slots {
-                        emit(&ChunkEvent {
-                            ty: "chunk_pruned",
-                            region: plan.path.display().to_string(),
-                            chunk_x: chunk.chunk_x,
-                            chunk_z: chunk.chunk_z,
-                            rel_x: chunk.rel_x,
-                            rel_z: chunk.rel_z,
-                            inhabited_time: chunk.inhabited_time,
-                            dry_run: args.dry_run,
-                        });
-                    }
-                }
-                PruneMode::Regions => {
-                    let max_time = plan
-                        .prune_slots
-                        .iter()
-                        .map(|c| c.inhabited_time)
-                        .max()
-                        .unwrap_or(0);
-                    emit(&RegionEvent {
-                        ty: "region_pruned",
-                        region: plan.path.display().to_string(),
-                        region_x: plan.region_x,
-                        region_z: plan.region_z,
-                        chunks: plan.prune_slots.len(),
-                        max_inhabited_time: max_time,
-                        dry_run: args.dry_run,
-                    });
-                }
-            }
-        } else {
-            print_plan(plan, args.mode, args.dry_run);
-        }
-
-        if !args.dry_run {
-            apply_plan(plan)?;
-        }
     }
 
     if is_json() {
@@ -341,6 +311,69 @@ pub fn execute(args: PruneInhabitedArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn collect_region_file_sets(region_dirs: &[RegionDir]) -> Result<Vec<RegionFileSet>> {
+    region_dirs
+        .iter()
+        .map(|dir| {
+            Ok(RegionFileSet {
+                path: dir.path.clone(),
+                files: list_region_files(&dir.path)?,
+            })
+        })
+        .collect()
+}
+
+fn emit_or_print_plan(plan: &RegionPlan, mode: PruneMode, dry_run: bool) {
+    if is_json() {
+        match mode {
+            PruneMode::Chunks => {
+                for chunk in &plan.prune_slots {
+                    emit(&ChunkEvent {
+                        ty: "chunk_pruned",
+                        region: plan.path.display().to_string(),
+                        chunk_x: chunk.chunk_x,
+                        chunk_z: chunk.chunk_z,
+                        rel_x: chunk.rel_x,
+                        rel_z: chunk.rel_z,
+                        inhabited_time: chunk.inhabited_time,
+                        dry_run,
+                    });
+                }
+            }
+            PruneMode::Regions => {
+                let max_time = plan
+                    .prune_slots
+                    .iter()
+                    .map(|c| c.inhabited_time)
+                    .max()
+                    .unwrap_or(0);
+                emit(&RegionEvent {
+                    ty: "region_pruned",
+                    region: plan.path.display().to_string(),
+                    region_x: plan.region_x,
+                    region_z: plan.region_z,
+                    chunks: plan.prune_slots.len(),
+                    max_inhabited_time: max_time,
+                    dry_run,
+                });
+            }
+        }
+    } else {
+        print_plan(plan, mode, dry_run);
+    }
+}
+
+fn emit_progress(phase: &'static str, regions_processed: usize, regions_total: usize) {
+    if is_json() {
+        emit(&ProgressEvent {
+            ty: "progress",
+            phase,
+            regions_processed,
+            regions_total,
+        });
+    }
 }
 
 fn load_claim_protection(

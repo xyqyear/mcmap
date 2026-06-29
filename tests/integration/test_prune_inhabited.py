@@ -214,6 +214,40 @@ def _pruned_regions(events: list[dict]) -> set[tuple[int, int]]:
     }
 
 
+def _assert_prune_progress(events: list[dict], result: dict, *, dry_run: bool) -> None:
+    phase = "scan" if dry_run else "prune"
+    progress = [
+        (i, ev)
+        for i, ev in enumerate(events)
+        if ev.get("type") == "progress"
+    ]
+    assert progress, f"no progress events emitted: {events!r}"
+    assert all(ev.get("phase") == phase for _, ev in progress), (
+        f"unexpected prune progress phase: {progress!r}"
+    )
+    totals = {int(ev["regions_total"]) for _, ev in progress}
+    assert totals == {int(result["regions_scanned"])}, (
+        f"progress totals do not match result: {progress!r} vs {result!r}"
+    )
+    processed = [int(ev["regions_processed"]) for _, ev in progress]
+    assert processed == list(range(1, int(result["regions_scanned"]) + 1)), (
+        f"progress processed counts are not monotonic: {progress!r}"
+    )
+    assert progress[-1][0] == len(events) - 2, (
+        f"final progress event should immediately precede result: {events!r}"
+    )
+
+    prune_event_indexes = [
+        i
+        for i, ev in enumerate(events)
+        if ev.get("type") in {"chunk_pruned", "region_pruned"}
+    ]
+    if prune_event_indexes:
+        assert min(prune_event_indexes) < progress[-1][0], (
+            f"prune events were delayed until after scanning: {events!r}"
+        )
+
+
 def _event_region_path(event: dict) -> str:
     return str(event["region"]).replace("\\", "/")
 
@@ -279,6 +313,7 @@ def _run_prune(
     result = assert_result(events)
     assert result["mode"] == mode
     assert result["dry_run"] is dry_run
+    _assert_prune_progress(events, result, dry_run=dry_run)
     return events
 
 
