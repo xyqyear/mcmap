@@ -360,11 +360,11 @@ Progress while processing region files:
 |------------|--------------|
 | `progress` | `phase` (`"scan"` in `--dry-run`, `"prune"` otherwise), `regions_processed`, `regions_total` |
 
-When `--mode chunks`, one event per selected chunk:
+When `--mode chunks`, one event per selected region:
 
 | `type`         | Extra fields |
 |----------------|--------------|
-| `chunk_pruned` | `region` (string), `chunk_x`, `chunk_z`, `rel_x`, `rel_z`, `inhabited_time`, `dry_run` |
+| `chunks_pruned` | `region` (string), `region_x`, `region_z`, `chunks` (array of `{chunk_x, chunk_z, rel_x, rel_z, inhabited_time}`), `dry_run` |
 
 When `--mode regions`, one event per selected region:
 
@@ -392,7 +392,7 @@ When `--mode regions`, one event per selected region:
 
 ```json
 {"type":"region_dir","path":"world/region","regions":2}
-{"type":"chunk_pruned","region":"world/region/r.0.0.mca","chunk_x":4,"chunk_z":15,"rel_x":4,"rel_z":15,"inhabited_time":480,"dry_run":true}
+{"type":"chunks_pruned","region":"world/region/r.0.0.mca","region_x":0,"region_z":0,"chunks":[{"chunk_x":4,"chunk_z":15,"rel_x":4,"rel_z":15,"inhabited_time":480}],"dry_run":true}
 {"type":"progress","phase":"scan","regions_processed":1,"regions_total":2}
 {"type":"progress","phase":"scan","regions_processed":2,"regions_total":2}
 {"type":"result","mode":"chunks","dry_run":true,"region_dirs":1,"regions_scanned":2,"chunks_scanned":1536,"chunks_selected":1,"regions_selected":1}

@@ -144,15 +144,22 @@ struct RegionDirEvent<'a> {
 }
 
 #[derive(Serialize)]
-struct ChunkEvent<'a> {
-    #[serde(rename = "type")]
-    ty: &'a str,
-    region: String,
+struct PrunedChunk {
     chunk_x: isize,
     chunk_z: isize,
     rel_x: u8,
     rel_z: u8,
     inhabited_time: i64,
+}
+
+#[derive(Serialize)]
+struct ChunkRegionEvent<'a> {
+    #[serde(rename = "type")]
+    ty: &'a str,
+    region: String,
+    region_x: isize,
+    region_z: isize,
+    chunks: Vec<PrunedChunk>,
     dry_run: bool,
 }
 
@@ -329,18 +336,24 @@ fn emit_or_print_plan(plan: &RegionPlan, mode: PruneMode, dry_run: bool) {
     if is_json() {
         match mode {
             PruneMode::Chunks => {
-                for chunk in &plan.prune_slots {
-                    emit(&ChunkEvent {
-                        ty: "chunk_pruned",
-                        region: plan.path.display().to_string(),
-                        chunk_x: chunk.chunk_x,
-                        chunk_z: chunk.chunk_z,
-                        rel_x: chunk.rel_x,
-                        rel_z: chunk.rel_z,
-                        inhabited_time: chunk.inhabited_time,
-                        dry_run,
-                    });
-                }
+                emit(&ChunkRegionEvent {
+                    ty: "chunks_pruned",
+                    region: plan.path.display().to_string(),
+                    region_x: plan.region_x,
+                    region_z: plan.region_z,
+                    chunks: plan
+                        .prune_slots
+                        .iter()
+                        .map(|chunk| PrunedChunk {
+                            chunk_x: chunk.chunk_x,
+                            chunk_z: chunk.chunk_z,
+                            rel_x: chunk.rel_x,
+                            rel_z: chunk.rel_z,
+                            inhabited_time: chunk.inhabited_time,
+                        })
+                        .collect(),
+                    dry_run,
+                });
             }
             PruneMode::Regions => {
                 let max_time = plan

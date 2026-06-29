@@ -186,9 +186,10 @@ def _assert_region_files_match(reference: Path, copies: list[Path]) -> None:
 
 def _pruned_chunks(events: list[dict]) -> set[tuple[int, int]]:
     return {
-        (int(ev["chunk_x"]), int(ev["chunk_z"]))
+        (int(chunk["chunk_x"]), int(chunk["chunk_z"]))
         for ev in events
-        if ev.get("type") == "chunk_pruned"
+        if ev.get("type") == "chunks_pruned"
+        for chunk in ev.get("chunks", [])
     }
 
 
@@ -200,10 +201,16 @@ def _pruned_chunk_events(
     return [
         ev
         for ev in events
-        if ev.get("type") == "chunk_pruned"
-        and int(ev["chunk_x"]) == cx
-        and int(ev["chunk_z"]) == cz
+        if ev.get("type") == "chunks_pruned"
+        and any(
+            int(item["chunk_x"]) == cx and int(item["chunk_z"]) == cz
+            for item in ev.get("chunks", [])
+        )
     ]
+
+
+def _pruned_chunk_region_events(events: list[dict]) -> list[dict]:
+    return [ev for ev in events if ev.get("type") == "chunks_pruned"]
 
 
 def _pruned_regions(events: list[dict]) -> set[tuple[int, int]]:
@@ -240,7 +247,7 @@ def _assert_prune_progress(events: list[dict], result: dict, *, dry_run: bool) -
     prune_event_indexes = [
         i
         for i, ev in enumerate(events)
-        if ev.get("type") in {"chunk_pruned", "region_pruned"}
+        if ev.get("type") in {"chunks_pruned", "region_pruned"}
     ]
     if prune_event_indexes:
         assert min(prune_event_indexes) < progress[-1][0], (
@@ -341,6 +348,14 @@ def test_prune_inhabited_keeps_player_chunk_and_prunes_distant_chunk(
     assert PLAYER_CHUNK not in pruned, (
         f"player chunk was unexpectedly pruned: {events!r}"
     )
+    chunk_region_events = _pruned_chunk_region_events(events)
+    event_regions = {
+        (_event_region_path(ev), int(ev["region_x"]), int(ev["region_z"]))
+        for ev in chunk_region_events
+    }
+    assert len(chunk_region_events) == len(event_regions), (
+        f"chunk mode emitted more than one event per region: {events!r}"
+    )
     _verify_dimension_prunes(events, DISTANT_CHUNK)
 
     with ServerInstance(modern_prune_flavor, modern_work_dir) as srv:
@@ -377,7 +392,7 @@ def test_prune_inhabited_dry_run_keeps_world(
     assert all(
         ev.get("dry_run") is True
         for ev in events
-        if ev.get("type") == "chunk_pruned"
+        if ev.get("type") == "chunks_pruned"
     )
 
     with ServerInstance(modern_prune_flavor, modern_work_dir) as srv:
