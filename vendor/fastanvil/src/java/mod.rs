@@ -8,6 +8,7 @@ pub mod pre18;
 
 mod block;
 mod chunk;
+mod default_states_26_3;
 mod heightmaps;
 mod section;
 mod section_data;
@@ -49,9 +50,13 @@ impl JavaChunk {
 
         match chunk {
             Ok(chunk) => Ok(Self::Post18(chunk)),
-            Err(_) => match from_bytes::<pre18::JavaChunk>(data) {
+            Err(modern_error) => match from_bytes::<pre18::JavaChunk>(data) {
                 Ok(chunk) => Ok(Self::Pre18(chunk)),
-                Err(_) => Ok(Self::Pre13(from_bytes::<pre13::JavaChunk>(data)?)),
+                Err(pre18_error) => from_bytes::<pre13::JavaChunk>(data)
+                    .map(Self::Pre13)
+                    .map_err(|pre13_error| serde::de::Error::custom(format!(
+                        "Invalid chunk: modern: {modern_error}; pre-1.18: {pre18_error}; pre-1.13: {pre13_error}"
+                    ))),
             },
         }
     }

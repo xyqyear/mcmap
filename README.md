@@ -357,4 +357,9 @@ Performance benchmarks on a 512×512 region:
 
 This project uses `fastanvil` and `fastnbt` libraries for Minecraft data processing.
 
+`fastanvil` is maintained in [`vendor/fastanvil`](vendor/fastanvil/UPSTREAM.md)
+and used as a local Cargo dependency. Format and decoding fixes can be made
+directly there; the linked document defines ownership, provenance and upstream
+refresh rules. `fastnbt` remains a crates.io dependency.
+
 Some code in this project is adapted from the [fastnbt](https://github.com/owengage/fastnbt) project.

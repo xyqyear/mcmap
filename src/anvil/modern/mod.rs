@@ -2,7 +2,6 @@
 // `fastanvil::TopShadeRenderer` for per-chunk shading.
 
 pub mod chunk;
-mod codec;
 pub mod render;
 
 pub use chunk::{ChunkData, HeightMode};

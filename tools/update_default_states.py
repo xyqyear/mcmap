@@ -16,10 +16,27 @@ def main() -> None:
             raise ValueError(f"Expected one default state for {name}")
         if properties := states[0].get("properties"):
             defaults[name] = properties
-    args.output.write_text(
-        json.dumps(defaults, sort_keys=True, separators=(",", ":")) + "\n",
-        encoding="utf-8",
-    )
+    lines = [
+        "// Generated from the official Minecraft 26.3 block report by tools/update_default_states.py.",
+        "#[rustfmt::skip]",
+        "static DEFAULTS: &[(&str, &[(&str, &str)])] = &[",
+    ]
+    for name, properties in sorted(defaults.items()):
+        pairs = ", ".join(
+            f"({json.dumps(key)}, {json.dumps(value)})"
+            for key, value in sorted(properties.items())
+        )
+        lines.append(f"    ({json.dumps(name)}, &[{pairs}]),")
+    lines.extend([
+        "];", "",
+        "pub(super) fn properties(name: &str) -> &'static [(&'static str, &'static str)] {",
+        "    DEFAULTS",
+        "        .binary_search_by_key(&name, |(id, _)| id)",
+        "        .map(|index| DEFAULTS[index].1)",
+        "        .unwrap_or(&[])",
+        "}", "",
+    ])
+    args.output.write_text("\n".join(lines), encoding="utf-8")
     print(f"Wrote default properties for {len(defaults)} blocks")
 
 

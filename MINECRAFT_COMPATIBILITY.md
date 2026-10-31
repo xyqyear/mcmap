@@ -35,17 +35,22 @@ state resolution.
 
 ## Reading and rendering
 
-`anvil/modern/codec.rs` first uses fastanvil's native modern decoder. When that
-fails on a chunk with `sections`, it normalizes block palettes in memory and
-decodes the modern schema directly. Other chunk layouts retain fastanvil's older
-format decoders. Region files and their NBT are never rewritten by `render` or
-`analyze`.
+The maintained [fastanvil dependency](vendor/fastanvil/UPSTREAM.md) reads both
+block-state formats directly through its `Block` deserializer. Modern chunks
+need one typed NBT decode; unknown fields are skipped without constructing a
+whole-chunk `Value` tree. Palette names and property strings borrow from the
+input while constructing the final owned block. Other chunk layouts retain
+fastanvil's older format decoders. Region files and their NBT are never rewritten
+by `render` or `analyze`.
 
 Explicit 26.3 properties override the embedded vanilla defaults. The defaults
 come from the official 26.3 block report, rather than inferring them from model
 variant order or property names. Unknown modded blocks retain their explicit
 properties and the existing palette fallback; their omitted default properties
 cannot be reconstructed from a vanilla report.
+Default-only states read the static property slice directly; states with
+explicit overrides use a small property vector. Neither path uses a mutable
+global state cache. The generated lookup uses binary search over sorted IDs.
 
 A malformed chunk fails its region and emits a `region` event with `status:error`.
 Split rendering does not publish a PNG for that region. If no region succeeds,
@@ -65,12 +70,15 @@ version declared in that release's Mojang version manifest:
 ```sh
 java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar --reports --output generated
 uv run --no-project python tools/update_default_states.py \
-  generated/reports/blocks.json src/anvil/modern/default_states_26_3.json
+  generated/reports/blocks.json vendor/fastanvil/src/java/default_states_26_3.rs
 ```
 
 The extractor requires exactly one default state per block and stores only blocks
 with default properties. The 26.3 report contains 1,286 blocks; 884 have default
-properties. The generated table is deterministic and loaded once per process.
+properties. The deterministic Rust lookup is compiled into the binary; it does
+not parse JSON or allocate a default-property registry at runtime. Explicit
+properties are merged with static defaults only for the modern representations;
+legacy `Name` entries retain their stored property semantics.
 
 ## Verification
 
@@ -78,7 +86,9 @@ properties. The generated table is deterministic and loaded once per process.
 old/new chunk formats, default and explicit properties, packed palette indices,
 block analysis, input preservation, malformed data and legitimate empty regions.
 The Integration tests workflow runs these checks before its real-server matrix,
-including pinned 26.2 and the latest vanilla release.
+including pinned 26.2 and the latest vanilla release. It also runs the vendored
+library's complete unit suite. Local library checks use the explicit filter
+`cargo test --locked -p fastanvil --lib java::block::tests`.
 Isolated test servers explicitly disable their whitelist so synthetic clients
 can join even though [26.3 Snapshot 2](https://www.minecraft.net/en-us/article/minecraft-26-3-snapshot-2)
 changed the game's default to enabled. Player-presence and pruning assertions
@@ -96,3 +106,52 @@ Local production-data verification uses copied MCA files and a copied color
 palette. Those private world files are not repository fixtures. Compare source
 digests before/after, region outcomes, decoded pixels and runtime; a zero exit
 code or the existence of a PNG alone does not establish successful rendering.
+
+`tools/benchmark_render.py` requires Linux and GNU time (`/usr/bin/time`, or
+`--time-binary`). It runs release binaries in randomized,
+interleaved order, with a warm-up for each case/thread count. Each measured
+process records wall time, CPU time and peak RSS. GNU time measures the native
+process's memory separately from the Python driver; its CPU times have 10 ms
+resolution. Pixel hashes must match between
+every case, and input hashes must remain unchanged. Use equivalent copies of
+the same terrain in old and 26.3 formats, the same palette and identical compiler
+and target settings; a fast blank image from an incompatible binary is not a
+valid baseline. Keep world copies and raw timing reports outside Git.
+
+```sh
+uv run tools/benchmark_render.py --palette /tmp/bench/palette.json \
+  --case baseline /tmp/bench/baseline /tmp/bench/old-format \
+  --case candidate-old /tmp/bench/candidate /tmp/bench/old-format \
+  --case candidate-new /tmp/bench/candidate /tmp/bench/26.3 \
+  --threads 1 2 --repeats 15 --output /tmp/bench/results
+```
+
+### Release performance evidence
+
+The 2026-10-31 comparison used rustc 1.90.0, the Linux GNU target, the same
+release/LTO settings, and two copied regions containing 1,839 stored chunks
+(959 fully generated). Each case ran 15 measured times per thread count in
+interleaved order after warming the files. Old-format copies represent the same
+block states, including explicit vanilla defaults. All rendered RGBA bytes
+matched across every case and source hashes remained unchanged.
+
+| Binary and input | 1 thread median | 2 threads median |
+| --- | ---: | ---: |
+| 0.8.4, equivalent old format | 175.9 ms | 125.0 ms |
+| 0.8.5, equivalent old format | 175.6 ms | 125.6 ms |
+| 0.8.5, original 26.3 | 280.1 ms | 189.6 ms |
+| 0.8.6, equivalent old format | 167.1 ms | 119.4 ms |
+| 0.8.6, original 26.3 | 174.4 ms | 124.7 ms |
+
+For the original 26.3 files, median CPU time was 270 ms with 0.8.5 and 160 ms
+with 0.8.6 for either thread count (GNU time's 10 ms resolution). Median peak
+RSS was 24,280 / 28,912 KiB with 0.8.5 and 21,152 / 28,312 KiB with 0.8.6
+(one / two threads). Region iteration order and allocator behavior affect RSS;
+the raw benchmark includes completion order for that reason.
+
+This sample shows parity with the pre-compatibility release's successful
+rendering baseline and a 34–38% reduction versus 0.8.5 on 26.3. The optimized
+old-format path itself is faster: 26.3 remains about 4–5% slower than that path
+within 0.8.6. These are measured end-to-end results, not a guarantee of zero
+format-dependent cost on every world, platform or input distribution. Do not
+compare these absolute GNU-target timings to earlier musl-target measurements.

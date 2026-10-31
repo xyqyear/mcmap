@@ -3,6 +3,11 @@ name = "mcmap"
 version = "0.8.5"
 edition = "2024"
 
+[workspace]
+members = ["vendor/fastanvil"]
+default-members = ["."]
+resolver = "3"
+
 [dependencies]
 clap = { version = "4.5.50", features = ["derive"] }
 env_logger = "0.11.8"

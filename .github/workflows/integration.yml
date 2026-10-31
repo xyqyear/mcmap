@@ -26,7 +26,9 @@ jobs:
         run: cargo build --release
 
       - name: Verify Minecraft chunk compatibility
-        run: cargo test --locked --test minecraft_26_3
+        run: |
+          cargo test --locked -p fastanvil --lib
+          cargo test --locked --test minecraft_26_3
 
       - name: Upload mcmap binary
         id: upload
