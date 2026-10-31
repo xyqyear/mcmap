@@ -56,6 +56,12 @@ Renders `.mca` regions to PNG. Two modes: combined (single output image) and
 split (one PNG per region). The event stream reports per-region progress in
 both.
 
+Chunk decoding failures emit `status:"error"` for the affected region. Split
+mode does not publish a PNG for that region. If no region succeeds, the command
+ends with an `error` event and exits with code 1. Successfully decoded empty or
+air-only regions remain valid transparent renders. Partial success can still
+end with `result`; callers must inspect the per-region outcomes.
+
 ### Event types
 
 `progress` phases:

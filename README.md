@@ -88,6 +88,10 @@ is intentionally left alone so it stays reusable across runs.
 - Auto-detects the palette format — modern palette routes through the 1.13+ pipeline, `"format":"1.7.10"` triggers the 1.7.10 legacy path, `"format":"1.12.2"` triggers the REI/JEID legacy path
 - Parallel processing for multiple regions
 
+Minecraft 26.3 compact block states and older chunks in the same world are
+supported. See [chunk compatibility](MINECRAFT_COMPATIBILITY.md) for format
+details, default-state data and rendering failures.
+
 ```bash
 # Basic rendering
 mcmap render -r region.mca -p palette.json -o map.png

@@ -25,6 +25,9 @@ jobs:
       - name: Build release binary
         run: cargo build --release
 
+      - name: Verify Minecraft chunk compatibility
+        run: cargo test --locked --test minecraft_26_3
+
       - name: Upload mcmap binary
         id: upload
         uses: actions/upload-artifact@v7
@@ -44,6 +47,7 @@ jobs:
         flavor:
           - forge-1.7.10-neid
           - forge-1.12.2-rei
+          - vanilla-26.2
           - vanilla-latest
 
     env:

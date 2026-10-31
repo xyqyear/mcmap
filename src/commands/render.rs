@@ -381,6 +381,9 @@ pub fn execute(args: RenderArgs) -> Result<()> {
             })
             .sum();
         info!("⏱ Region rendering took: {:?}", render_start.elapsed());
+        if saved == 0 {
+            return Err("No regions could be rendered".into());
+        }
         info!("{} regions saved to {}", saved, out_dir.display());
         info!("⏱ Total time: {:?}", total_start.elapsed());
         emit_if_json(&ResultEvent {
@@ -478,6 +481,9 @@ pub fn execute(args: RenderArgs) -> Result<()> {
 
     info!("{} regions processed successfully", region_maps.len());
     let region_count = region_maps.len();
+    if region_count == 0 {
+        return Err("No regions could be rendered".into());
+    }
 
     let dx = (x_range.end.0 - x_range.start.0) as usize;
     let dz = (z_range.end.0 - z_range.start.0) as usize;

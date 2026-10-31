@@ -68,6 +68,14 @@ def build_flavors() -> list[Flavor]:
             palette_format="forge112",
         ),
         Flavor(
+            id="vanilla-26.2",
+            distribution="vanilla",
+            mc_version="26.2",
+            java_major=25,
+            level_type="minecraft:flat",
+            palette_format="modern",
+        ),
+        Flavor(
             id="vanilla-latest",
             distribution="vanilla",
             mc_version="",        # filled in at session start

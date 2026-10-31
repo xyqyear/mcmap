@@ -105,8 +105,7 @@ pub fn render_region<E: RenderEngine>(
                 Ok(Some(c)) => c,
                 Ok(None) => continue,
                 Err(e) => {
-                    log::warn!("Skipping malformed chunk ({},{}): {}", cx, cz, e);
-                    continue;
+                    return Err(format!("Failed to decode chunk ({cx},{cz}): {e}"));
                 }
             };
 
