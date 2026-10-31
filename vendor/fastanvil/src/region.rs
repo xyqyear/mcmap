@@ -158,23 +158,7 @@ where
         let input = self.compressed.as_slice();
         match metadata.compression_scheme {
             scheme @ (CompressionScheme::Zlib | CompressionScheme::Gzip) => {
-                if self.decoder.decode(&scheme, input, output)? {
-                    return Ok(true);
-                }
-                // Preserve the streaming decoder's historical handling of unusual streams.
-                match scheme {
-                    CompressionScheme::Zlib => {
-                        let mut decoder = flate2::write::ZlibDecoder::new(output);
-                        decoder.write_all(input)?;
-                        decoder.finish()?;
-                    }
-                    CompressionScheme::Gzip => {
-                        let mut decoder = flate2::write::GzDecoder::new(output);
-                        decoder.write_all(input)?;
-                        decoder.finish()?;
-                    }
-                    _ => unreachable!(),
-                }
+                self.decoder.decode(&scheme, input, output)?;
             }
             CompressionScheme::Uncompressed => output.extend_from_slice(input),
             CompressionScheme::Lz4 => {

@@ -74,11 +74,13 @@ and its first-palette-length cache. The optional expanded array lives on the
 heap so untouched sections do not carry an inline 8 KiB cache.
 
 Region reads reuse compressed and decompressed buffers and a `libdeflate`
-decoder from the maintained [strict native dependency](../libdeflate-sys/UPSTREAM.md).
-Valid complete zlib/gzip streams take the native path; unusual framing,
-optional gzip headers and decoding failures use the existing `flate2` path to
-preserve its acceptance and error behavior. The allocating `read_chunk` API
-remains available alongside `read_chunk_into`.
+decoder from the registry `libdeflate-sys` dependency. The root lockfile pins
+the upstream source and checksum. Zlib/gzip streams, including optional gzip
+headers, use that decoder directly; a rejected stream fails the read without
+exposing partial bytes. Decoding stops at the first complete compressed stream.
+Invalid compressed inputs follow upstream behavior rather than matching another
+decoder's acceptance or error text. `flate2` remains in use for writing chunks.
+The allocating `read_chunk` API remains available alongside `read_chunk_into`.
 
 Chunks expose bulk surface heights and a compatible default water-depth method.
 Modern water columns locate each section once, preserving the renderer's depth

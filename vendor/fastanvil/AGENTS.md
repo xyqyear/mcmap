@@ -10,9 +10,11 @@ Read [source ownership and update rules](UPSTREAM.md) before editing it.
   in `UPSTREAM.md` and its owning mcmap topic; do not rewrite upstream history.
 - Add behavior tests for format changes, including old formats and malformed
   inputs. Use explicit test filters locally; complete CI runs after push.
-- Performance changes must preserve pixels, source files and failure semantics.
-  Compare optimized builds, matching output and thread counts, using repeated
-  interleaved measurements. Include CPU and peak memory, not only wall time.
+- Performance changes must preserve pixels and source files for valid saves.
+  Invalid compressed streams follow the upstream decoder's acceptance and error
+  behavior; preserve I/O failures and NBT/layout validation. Compare optimized
+  builds with matching output and thread counts using repeated interleaved
+  measurements. Include CPU and peak memory, not only wall time.
 - `src/java/default_states_26_3.rs` is generated from the official Minecraft
   block report by `tools/update_default_states.py` at the mcmap repository root.
   Regenerate it; do not hand-edit block defaults.

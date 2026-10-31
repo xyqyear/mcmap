@@ -54,7 +54,14 @@ use a small property vector. A read-only hash index over the finite official
 default-state table is initialized once. Input-derived states are not retained
 in a global cache, and custom palette colors remain specific to each invocation.
 
-A malformed chunk fails its region and emits a `region` event with `status:error`.
+Zlib/gzip acceptance follows the upstream `libdeflate` decoder. Valid streams
+must yield identical NBT bytes; invalid compressed encodings are not required to
+produce the same success/failure outcome or error text as another decoder.
+Decoding stops at the first complete compressed stream. The renderer does not
+rewrite source data or act as a strict compressed-stream validator.
+
+A decoding or NBT validation failure fails its region and emits a `region` event
+with `status:error`.
 Split rendering does not publish a PNG for that region. If no region succeeds,
 both output modes emit a terminal error and exit nonzero. Empty regions and
 successfully decoded air-only chunks are valid transparent maps. In a partially
