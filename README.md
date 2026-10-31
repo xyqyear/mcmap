@@ -8,6 +8,9 @@ Fast command-line tool for rendering Minecraft region files and analyzing block 
 
 Download the latest release for your platform from [GitHub Releases](https://github.com/xyqyear/mcmap/releases):
 
+Linux GNU binaries require glibc 2.34 or newer. Use the musl build on systems
+without a compatible glibc.
+
 ### Build from Source
 
 ```bash

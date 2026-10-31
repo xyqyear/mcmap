@@ -15,7 +15,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
@@ -36,10 +36,15 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: integration-build-${{ matrix.target }}
+          key: integration-build-${{ matrix.os }}-${{ matrix.target }}
 
       - name: Build release binary
         run: cargo build --release --locked
+
+      - name: Verify GNU glibc compatibility
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        shell: bash
+        run: bash scripts/check-glibc.sh "target/${{ matrix.target }}/release/mcmap"
 
       - name: Verify Minecraft chunk compatibility
         shell: bash

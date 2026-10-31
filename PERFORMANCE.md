@@ -53,6 +53,11 @@ libraries may choose supported instructions at runtime. The hash implementation
 uses its portable fallback where the compilation target lacks accelerated
 instructions.
 
+GNU release binaries preserve the glibc 2.34 baseline. Their build and release
+workflows use Ubuntu 22.04 and reject ELF files requiring newer glibc symbols
+before uploading artifacts. This also applies to bundled native dependencies.
+Publication waits for all three platform packages and their compatibility checks.
+
 ## Real-world corpus
 
 Keep private archives, extracted maps, palettes and rendered images outside Git.

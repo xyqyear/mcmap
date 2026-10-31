@@ -23,7 +23,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
@@ -55,10 +55,15 @@ jobs:
       - name: Cache cargo registry and build
         uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          key: ${{ matrix.os }}-${{ matrix.target }}
 
       - name: Build release binary
         run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Verify GNU glibc compatibility
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        shell: bash
+        run: bash scripts/check-glibc.sh "target/${{ matrix.target }}/release/mcmap"
 
       - name: Package artifact
         id: package
@@ -78,10 +83,33 @@ jobs:
             echo "asset=${dirname}.tar.gz" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Create or update release and upload artifact
+      - name: Upload verified release package
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.target }}
+          path: ${{ steps.package.outputs.asset }}
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish verified packages
+    needs: build-and-upload
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download verified release packages
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: release-packages
+
+      - name: Create or update release and upload artifacts
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ env.TAG }}
-          name: ${{ env.TAG }}
-          files: ${{ steps.package.outputs.asset }}
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          name: ${{ inputs.tag || github.ref_name }}
+          files: |
+            release-packages/${{ github.event.repository.name }}-${{ inputs.tag || github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
+            release-packages/${{ github.event.repository.name }}-${{ inputs.tag || github.ref_name }}-x86_64-unknown-linux-musl.tar.gz
+            release-packages/${{ github.event.repository.name }}-${{ inputs.tag || github.ref_name }}-x86_64-pc-windows-msvc.zip
           fail_on_unmatched_files: true
