@@ -9,8 +9,8 @@
 //   via `legacy::LegacyPalette`, with the format tag deciding which chunk
 //   decoder the renderer plugs in.
 //
-// `detect_format` peeks at the JSON's root `format` field to route. Absence
-// of that field ⇒ modern (the flat map has no such key).
+// A flat RGBA map without `format` is modern. Other inputs use `detect_format`
+// to preserve the wrapped formats and their validation errors.
 
 use log::info;
 use serde::Deserialize;
@@ -18,6 +18,9 @@ use std::path::Path;
 
 use super::legacy::LegacyPalette;
 use super::modern::RenderedPalette;
+
+#[cfg(test)]
+mod tests;
 
 pub type Rgba = [u8; 4];
 
@@ -44,14 +47,13 @@ pub enum AnyPalette {
 }
 
 /// Peek at a palette JSON to determine its format without fully parsing it.
-pub fn detect_format(path: &Path) -> Result<PaletteFormat> {
-    let bytes = std::fs::read(path)?;
+fn detect_format(bytes: &[u8]) -> Result<PaletteFormat> {
     #[derive(Deserialize)]
     struct Probe {
         #[serde(default)]
         format: Option<String>,
     }
-    let probe: Probe = serde_json::from_slice(&bytes)?;
+    let probe: Probe = serde_json::from_slice(bytes)?;
     match probe.format.as_deref() {
         Some("1.7.10") => Ok(PaletteFormat::Legacy17),
         Some("1.12.2") => Ok(PaletteFormat::Forge112),
@@ -62,12 +64,19 @@ pub fn detect_format(path: &Path) -> Result<PaletteFormat> {
 /// Load a palette from disk, dispatching on its declared format.
 pub fn load(path: &Path) -> Result<AnyPalette> {
     info!("Loading palette from: {}", path.display());
-    let format = detect_format(path)?;
+    let bytes = std::fs::read(path)?;
+    from_slice(&bytes)
+}
+
+fn from_slice(bytes: &[u8]) -> Result<AnyPalette> {
+    let modern = serde_json::from_slice::<super::modern::render::BlockColors>(bytes);
+    let format = match &modern {
+        Ok(colors) if !colors.contains_key("format") => PaletteFormat::Modern,
+        _ => detect_format(bytes)?,
+    };
     match format {
         PaletteFormat::Modern => {
-            let bytes = std::fs::read(path)?;
-            let blockstates: std::collections::HashMap<String, Rgba> =
-                serde_json::from_slice(&bytes)?;
+            let blockstates = modern?;
             info!(
                 "Palette loaded: {} block states (modern / 1.13+)",
                 blockstates.len()
@@ -75,12 +84,12 @@ pub fn load(path: &Path) -> Result<AnyPalette> {
             Ok(AnyPalette::Modern(RenderedPalette::new(blockstates)))
         }
         PaletteFormat::Legacy17 => {
-            let pal = LegacyPalette::load(path)?;
+            let pal = LegacyPalette::from_slice(bytes)?;
             info!("Palette loaded: {} entries (legacy / 1.7.10)", pal.len());
             Ok(AnyPalette::Legacy(pal, format))
         }
         PaletteFormat::Forge112 => {
-            let pal = LegacyPalette::load(path)?;
+            let pal = LegacyPalette::from_slice(bytes)?;
             info!(
                 "Palette loaded: {} entries (legacy / Forge 1.12.2 + REI)",
                 pal.len()

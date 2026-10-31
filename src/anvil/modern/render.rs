@@ -16,17 +16,22 @@
 // Both cases collapse to the same rule: any block whose name ends in `_air`
 // or `:air` is transparent. Everything else defers to fastanvil.
 
+use fastanvil::Chunk;
 use std::collections::HashMap;
 
 use super::chunk::{ChunkData, HeightMode};
 use crate::anvil::pipeline::{RenderEngine, Rgba};
 
+#[cfg(test)]
+mod tests;
+
+pub type BlockColors = HashMap<String, Rgba, ahash::RandomState>;
+
 /// Modern palette: name → RGBA. Implements `fastanvil::Palette` directly so
 /// the per-chunk render path doesn't need a wrapper. The `blockstates` map
 /// stays public for direct lookup in the analyze command.
 pub struct RenderedPalette {
-    pub blockstates: HashMap<String, Rgba>,
-    fa_palette: fastanvil::RenderedPalette,
+    pub blockstates: BlockColors,
 }
 
 impl std::fmt::Debug for RenderedPalette {
@@ -38,24 +43,8 @@ impl std::fmt::Debug for RenderedPalette {
 }
 
 impl RenderedPalette {
-    pub fn new(blockstates: HashMap<String, Rgba>) -> Self {
-        use image::RgbaImage;
-
-        // fastanvil wants biome colormaps for grass/foliage tinting. We don't
-        // apply biome tints at render time, so feed it flat dummy maps.
-        let grass = RgbaImage::from_pixel(256, 256, image::Rgba([100, 150, 50, 255]));
-        let foliage = RgbaImage::from_pixel(256, 256, image::Rgba([50, 100, 30, 255]));
-
-        let fa_palette = fastanvil::RenderedPalette {
-            blockstates: blockstates.clone(),
-            grass,
-            foliage,
-        };
-
-        Self {
-            blockstates,
-            fa_palette,
-        }
+    pub fn new(blockstates: BlockColors) -> Self {
+        Self { blockstates }
     }
 }
 
@@ -67,7 +56,13 @@ impl fastanvil::Palette for RenderedPalette {
         if name.ends_with("_air") || name.ends_with(":air") {
             return [0, 0, 0, 0];
         }
-        self.fa_palette.pick(block, biome)
+        fastanvil::pick_block_color(
+            block,
+            biome,
+            |key| self.blockstates.get(key).copied(),
+            |biome| biome.map(|_| [100, 150, 50, 255]).unwrap_or([255, 0, 0, 0]),
+            |biome| biome.map(|_| [50, 100, 30, 255]).unwrap_or([255, 0, 0, 0]),
+        )
     }
 }
 
@@ -86,15 +81,41 @@ impl<'a> TopShadeRenderer<'a> {
     }
 }
 
+pub enum NorthBoundary {
+    Heights([isize; 16]),
+    Deferred(Box<ChunkData>),
+}
+
 impl<'a> RenderEngine for TopShadeRenderer<'a> {
     type Chunk = ChunkData;
+    type Boundary = NorthBoundary;
+
+    fn boundary(&self, chunk: ChunkData) -> NorthBoundary {
+        NorthBoundary::Deferred(Box::new(chunk))
+    }
+
+    fn render_chunk(
+        &self,
+        chunk: ChunkData,
+        north: Option<&NorthBoundary>,
+    ) -> ([Rgba; 256], NorthBoundary) {
+        let renderer = fastanvil::TopShadeRenderer::new(self.palette, self.height_mode);
+        let (pixels, south) = renderer.render_with_north_heights(&chunk, || {
+            north.map(|north| match north {
+                NorthBoundary::Heights(heights) => *heights,
+                NorthBoundary::Deferred(chunk) => {
+                    std::array::from_fn(|x| chunk.surface_height(x, 15, self.height_mode))
+                }
+            })
+        });
+        let boundary = match south {
+            Some(heights) => NorthBoundary::Heights(heights),
+            None => NorthBoundary::Deferred(Box::new(chunk)),
+        };
+        (pixels, boundary)
+    }
 
     fn decode(&self, bytes: &[u8]) -> Result<Option<Self::Chunk>, String> {
         ChunkData::from_bytes(bytes).map(Some)
-    }
-
-    fn render_chunk(&self, chunk: &ChunkData, north: Option<&ChunkData>) -> [Rgba; 16 * 16] {
-        let fa_renderer = fastanvil::TopShadeRenderer::new(self.palette, self.height_mode);
-        fa_renderer.render(chunk, north)
     }
 }

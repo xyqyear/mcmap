@@ -4,16 +4,62 @@ use fastnbt::LongArray;
 use serde::Deserialize;
 use std::fmt::Debug;
 
-#[derive(Deserialize, Debug)]
-#[serde(transparent)]
+#[derive(Debug)]
 pub struct BlockData<T: Debug> {
     inner: DataInner<T>,
+    packing: Packing,
 }
 
-#[derive(Deserialize, Debug)]
-#[serde(transparent)]
+#[derive(Debug)]
 pub struct BiomeData<T: Debug> {
     inner: DataInner<T>,
+    packing: Packing,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Packing {
+    bits: usize,
+    per_long: usize,
+    reciprocal: u64,
+    mask: u64,
+}
+
+impl Packing {
+    fn new(palette_len: usize, minimum_bits: usize) -> Self {
+        let bits = minimum_bits.max(min_bits_for_n_states(palette_len));
+        let per_long = 64 / bits;
+        Self {
+            bits,
+            per_long,
+            reciprocal: ((1u64 << 32) + per_long as u64 - 1) / per_long as u64,
+            mask: u64::MAX >> (64 - bits),
+        }
+    }
+
+    fn long_index(self, index: usize) -> usize {
+        if index < 4096 {
+            // For these indices and divisors <= 64, rounding the reciprocal cannot change the quotient.
+            ((index as u64 * self.reciprocal) >> 32) as usize
+        } else {
+            index / self.per_long
+        }
+    }
+}
+
+impl<'de, T: Debug + Deserialize<'de>> Deserialize<'de> for BlockData<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let inner = DataInner::deserialize(deserializer)?;
+        let packing = Packing::new(inner.palette.len(), 4);
+        Ok(Self { inner, packing })
+    }
+}
+
+impl<'de, T: Debug + Deserialize<'de>> Deserialize<'de> for BiomeData<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let inner = DataInner::deserialize(deserializer)?;
+        let packing = Packing::new(inner.palette.len(), 1);
+        Ok(Self { inner, packing })
+    }
 }
 
 impl<T: Debug> BlockData<T> {
@@ -21,10 +67,7 @@ impl<T: Debug> BlockData<T> {
     /// the section ie 0..16.
     pub fn at(&self, x: usize, sec_y: usize, z: usize) -> Option<&T> {
         let state_index = (sec_y * 16 * 16) + z * 16 + x;
-        self.inner.at(
-            state_index,
-            blockstates_bits_per_block(self.inner.palette.len()),
-        )
+        self.inner.at(state_index, self.packing)
     }
 
     /// Get iterator for the state indicies. This will increase in x, then z,
@@ -45,10 +88,9 @@ impl<T: Debug> BlockData<T> {
     ///     let z = (i & 0x00F0) >> 4;
     /// }
     /// ```
-    pub fn try_iter_indices(&self) -> Option<StatesIter> {
+    pub fn try_iter_indices(&self) -> Option<StatesIter<'_>> {
         if let Some(data) = &self.inner.data {
-            let bits = blockstates_bits_per_block(self.inner.palette.len());
-            Some(StatesIter::new(bits, 16 * 16 * 16, data))
+            Some(StatesIter::new(self.packing.bits, 16 * 16 * 16, data))
         } else {
             None
         }
@@ -70,14 +112,12 @@ impl<T: Debug> BiomeData<T> {
         let z = z / 4;
 
         let state_index = (y * 4 * 4) + z * 4 + x;
-        self.inner
-            .at(state_index, biomes_bits_per_block(self.inner.palette.len()))
+        self.inner.at(state_index, self.packing)
     }
 
-    pub fn try_iter_indices(&self) -> Option<StatesIter> {
+    pub fn try_iter_indices(&self) -> Option<StatesIter<'_>> {
         if let Some(data) = &self.inner.data {
-            let bits = biomes_bits_per_block(self.inner.palette.len());
-            Some(StatesIter::new(bits, 4 * 4 * 4, data))
+            Some(StatesIter::new(self.packing.bits, 4 * 4 * 4, data))
         } else {
             None
         }
@@ -95,25 +135,22 @@ struct DataInner<T: Debug> {
 }
 
 impl<T: Debug> DataInner<T> {
-    pub fn at(&self, index: usize, bits_per_item: usize) -> Option<&T> {
+    fn at(&self, index: usize, packing: Packing) -> Option<&T> {
         if self.data.is_none() && self.palette.len() == 1 {
             return self.palette.get(0);
         }
 
         let data = self.data.as_ref()?;
 
-        let values_per_64bits = 64 / bits_per_item;
-
-        let long_index = index / values_per_64bits;
-        let inter_index = index % values_per_64bits;
-        let range = inter_index * bits_per_item..(inter_index + 1) * bits_per_item;
+        let long_index = packing.long_index(index);
+        let shift = (index - long_index * packing.per_long) * packing.bits;
 
         // Super important line: treat the i64 as an u64.
         // Bug 1: Kept i64 and the get_bits interprets as signed.
         // Bug 2: Went to usize, worked on 64bit platforms broke on 32 bit like WASM.
         let long = data[long_index] as u64;
 
-        let palette_index = long.get_bits(range);
+        let palette_index = (long >> shift) & packing.mask;
 
         self.palette.get(palette_index as usize)
     }
@@ -136,6 +173,7 @@ impl<T: Debug> Default for BlockData<T> {
     fn default() -> Self {
         Self {
             inner: Default::default(),
+            packing: Packing::new(0, 4),
         }
     }
 }
@@ -144,24 +182,14 @@ impl<T: Debug> Default for BiomeData<T> {
     fn default() -> Self {
         Self {
             inner: Default::default(),
+            packing: Packing::new(0, 1),
         }
     }
 }
 
-/// Number of bits that will be used per block in block_states data for blocks.
-fn blockstates_bits_per_block(palette_len: usize) -> usize {
-    std::cmp::max(4, min_bits_for_n_states(palette_len))
-    // std::cmp::max((palette_len as f64).log2().ceil() as usize, 4)
-}
-
-/// Number of bits that will be used per block in block_states data for biomes.
-fn biomes_bits_per_block(palette_len: usize) -> usize {
-    std::cmp::max(1, min_bits_for_n_states(palette_len))
-    // std::cmp::max((palette_len as f64).log2().ceil() as usize, 1)
-}
-
 pub(crate) fn min_bits_for_n_states(palette_len: usize) -> usize {
-    (usize::BITS - (palette_len - 1).leading_zeros()) as usize
+    // Empty palettes retain the word-sized packing used by the original release build.
+    (usize::BITS - palette_len.wrapping_sub(1).leading_zeros()) as usize
 }
 
 /// Iterator over block state data. Each value is the index into the relevant palette.
@@ -214,3 +242,76 @@ impl<'a> Iterator for StatesIter<'a> {
 }
 
 impl<'a> ExactSizeIterator for StatesIter<'a> {}
+
+#[cfg(test)]
+mod packing_tests {
+    use super::{BiomeData, BlockData, Packing};
+
+    #[test]
+    fn empty_palettes_keep_word_sized_packed_indices() {
+        let nbt = fastnbt::nbt!({
+            "palette": [],
+            "data": fastnbt::LongArray::new(vec![0, 1, 2, 3]),
+        });
+        let bytes = fastnbt::to_bytes(&nbt).unwrap();
+        let blocks: BlockData<String> = fastnbt::from_bytes(&bytes).unwrap();
+        let biomes: BiomeData<String> = fastnbt::from_bytes(&bytes).unwrap();
+        assert_eq!(blocks.packing.bits, usize::BITS as usize);
+        assert_eq!(biomes.packing.bits, usize::BITS as usize);
+        assert_eq!(blocks.at(0, 0, 0), None);
+        assert_eq!(biomes.at(0, 0, 0), None);
+        if usize::BITS == 64 {
+            assert_eq!(
+                blocks
+                    .try_iter_indices()
+                    .unwrap()
+                    .take(4)
+                    .collect::<Vec<_>>(),
+                [0, 1, 2, 3]
+            );
+            assert_eq!(
+                biomes
+                    .try_iter_indices()
+                    .unwrap()
+                    .take(4)
+                    .collect::<Vec<_>>(),
+                [0, 1, 2, 3]
+            );
+            assert!(std::panic::catch_unwind(|| blocks.at(4, 0, 0)).is_err());
+        }
+    }
+
+    #[test]
+    fn reciprocal_matches_division_for_all_section_indices() {
+        for per_long in 1..=64 {
+            let packing = Packing {
+                bits: 1,
+                per_long,
+                reciprocal: ((1u64 << 32) + per_long as u64 - 1) / per_long as u64,
+                mask: 1,
+            };
+            for index in 0..4096 {
+                let long_index = packing.long_index(index);
+                assert_eq!(long_index, index / per_long);
+                assert_eq!(index - long_index * per_long, index % per_long);
+            }
+        }
+    }
+
+    #[test]
+    fn reciprocal_keeps_division_for_indices_outside_a_section() {
+        for per_long in 1..=64 {
+            let packing = Packing {
+                bits: 1,
+                per_long,
+                reciprocal: ((1u64 << 32) + per_long as u64 - 1) / per_long as u64,
+                mask: 1,
+            };
+            for index in [4096, 4097, 65535, 1 << 20, usize::MAX - 1, usize::MAX] {
+                let long_index = packing.long_index(index);
+                assert_eq!(long_index, index / per_long);
+                assert_eq!(index - long_index * per_long, index % per_long);
+            }
+        }
+    }
+}

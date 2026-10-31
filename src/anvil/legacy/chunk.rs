@@ -92,11 +92,7 @@ impl LegacySection {
                         SECTION_BLOCKS / 2
                     ));
                 }
-                for i in 0..SECTION_BLOCKS {
-                    let base = blocks[i] as u8 as u16;
-                    let add_nib = nibble(add, i);
-                    ids[i] = base | ((add_nib as u16) << 8);
-                }
+                unpack_ids_with_add(&mut ids, blocks, add);
             } else {
                 for i in 0..SECTION_BLOCKS {
                     ids[i] = blocks[i] as u8 as u16;
@@ -130,9 +126,7 @@ impl LegacySection {
                     SECTION_BLOCKS / 2
                 ));
             }
-            for i in 0..SECTION_BLOCKS {
-                metas[i] = nibble(data, i) as u16;
-            }
+            unpack_nibbles(&mut metas, data);
         }
 
         Ok(LegacySection {
@@ -143,14 +137,19 @@ impl LegacySection {
     }
 }
 
-/// Even-index → low nibble, odd-index → high nibble. Standard Anvil packing.
-#[inline]
-fn nibble(arr: &[i8], i: usize) -> u8 {
-    let byte = arr[i >> 1] as u8;
-    if i & 1 == 0 {
-        byte & 0x0F
-    } else {
-        (byte >> 4) & 0x0F
+pub(super) fn unpack_ids_with_add(ids: &mut [u16; SECTION_BLOCKS], blocks: &[i8], add: &[i8]) {
+    for i in 0..SECTION_BLOCKS / 2 {
+        let high = add[i] as u8 as u16;
+        ids[2 * i] = blocks[2 * i] as u8 as u16 | ((high & 0xF) << 8);
+        ids[2 * i + 1] = blocks[2 * i + 1] as u8 as u16 | ((high >> 4) << 8);
+    }
+}
+
+pub(super) fn unpack_nibbles(values: &mut [u16; SECTION_BLOCKS], packed: &[i8]) {
+    for i in 0..SECTION_BLOCKS / 2 {
+        let byte = packed[i] as u8;
+        values[2 * i] = (byte & 0xF) as u16;
+        values[2 * i + 1] = (byte >> 4) as u16;
     }
 }
 
@@ -256,4 +255,79 @@ pub fn is_legacy_chunk(data: &[u8]) -> Result<bool, String> {
         None => true,
         Some(v) => v < 1451,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn section() -> SectionNbt {
+        SectionNbt {
+            y: 0,
+            blocks16: None,
+            data16: None,
+            blocks: None,
+            add: None,
+            data: None,
+        }
+    }
+
+    #[test]
+    fn packed_ids_and_metadata_keep_every_even_and_odd_block() {
+        let mut blocks = vec![0i8; SECTION_BLOCKS];
+        let mut add = vec![0i8; SECTION_BLOCKS / 2];
+        let mut data = vec![0i8; SECTION_BLOCKS / 2];
+        for index in 0..SECTION_BLOCKS {
+            let id = ((index * 911 + 0xABC) & 0xFFF) as u16;
+            let meta = ((index * 7 + 3) & 0xF) as u8;
+            blocks[index] = id as i8;
+            add[index / 2] |= (((id >> 8) as u8) << (4 * (index % 2))) as i8;
+            data[index / 2] |= (meta << (4 * (index % 2))) as i8;
+        }
+        let decoded = LegacySection::from_nbt(SectionNbt {
+            blocks: Some(ByteArray::new(blocks)),
+            add: Some(ByteArray::new(add)),
+            data: Some(ByteArray::new(data)),
+            ..section()
+        })
+        .unwrap();
+        for index in 0..SECTION_BLOCKS {
+            assert_eq!(decoded.ids[index], ((index * 911 + 0xABC) & 0xFFF) as u16);
+            assert_eq!(decoded.metas[index], ((index * 7 + 3) & 0xF) as u16);
+        }
+    }
+
+    #[test]
+    fn extended_fields_override_invalid_vanilla_arrays_and_keep_wide_metadata() {
+        let mut blocks16 = Vec::with_capacity(SECTION_BLOCKS * 2);
+        let mut data16 = Vec::with_capacity(SECTION_BLOCKS * 2);
+        for index in 0..SECTION_BLOCKS {
+            blocks16.extend((index as u16 ^ 0xFEDC).to_be_bytes().map(|b| b as i8));
+            data16.extend((index as u16 ^ 0xABCD).to_be_bytes().map(|b| b as i8));
+        }
+        let decoded = LegacySection::from_nbt(SectionNbt {
+            blocks16: Some(ByteArray::new(blocks16)),
+            data16: Some(ByteArray::new(data16)),
+            blocks: Some(ByteArray::new(vec![0])),
+            add: Some(ByteArray::new(vec![0])),
+            data: Some(ByteArray::new(vec![0])),
+            ..section()
+        })
+        .unwrap();
+        for index in 0..SECTION_BLOCKS {
+            assert_eq!(decoded.ids[index], index as u16 ^ 0xFEDC);
+            assert_eq!(decoded.metas[index], index as u16 ^ 0xABCD);
+        }
+    }
+
+    #[test]
+    fn invalid_add_is_rejected_before_invalid_data() {
+        let result = LegacySection::from_nbt(SectionNbt {
+            blocks: Some(ByteArray::new(vec![0; SECTION_BLOCKS])),
+            add: Some(ByteArray::new(vec![0])),
+            data: Some(ByteArray::new(vec![0])),
+            ..section()
+        });
+        assert!(matches!(result, Err(error) if error == "Add length 1 (expected 2048)"));
+    }
 }

@@ -7,6 +7,9 @@ use clap::{Parser, Subcommand};
 use env_logger::Env;
 use serde::Serialize;
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Minecraft map renderer and analysis tool", long_about = None)]
 struct Cli {

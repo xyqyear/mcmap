@@ -427,6 +427,7 @@ static const u32 precode_decode_results[] = {
 
 /* Indicates an end-of-block entry in the litlen decode table */
 #define HUFFDEC_END_OF_BLOCK		0x00002000
+#define HUFFDEC_INVALID			0x00001000
 
 /* Maximum number of bits that can be consumed by decoding a match length */
 #define LENGTH_MAXBITS		(DEFLATE_MAX_LITLEN_CODEWORD_LEN + \
@@ -584,7 +585,9 @@ static const u32 litlen_decode_results[] = {
 	ENTRY(35 , 3) , ENTRY(43 , 3) , ENTRY(51 , 3) , ENTRY(59 , 3),
 	ENTRY(67 , 4) , ENTRY(83 , 4) , ENTRY(99 , 4) , ENTRY(115, 4),
 	ENTRY(131, 5) , ENTRY(163, 5) , ENTRY(195, 5) , ENTRY(227, 5),
-	ENTRY(258, 0) , ENTRY(258, 0) , ENTRY(258, 0) ,
+	ENTRY(258, 0),
+	HUFFDEC_EXCEPTIONAL | HUFFDEC_END_OF_BLOCK | HUFFDEC_INVALID,
+	HUFFDEC_EXCEPTIONAL | HUFFDEC_END_OF_BLOCK | HUFFDEC_INVALID,
 #undef ENTRY
 };
 
@@ -624,7 +627,7 @@ static const u32 offset_decode_results[] = {
 	ENTRY(257   , 7)  , ENTRY(385   , 7)  , ENTRY(513   , 8)  , ENTRY(769   , 8)  ,
 	ENTRY(1025  , 9)  , ENTRY(1537  , 9)  , ENTRY(2049  , 10) , ENTRY(3073  , 10) ,
 	ENTRY(4097  , 11) , ENTRY(6145  , 11) , ENTRY(8193  , 12) , ENTRY(12289 , 12) ,
-	ENTRY(16385 , 13) , ENTRY(24577 , 13) , ENTRY(24577 , 13) , ENTRY(24577 , 13) ,
+	ENTRY(16385 , 13) , ENTRY(24577 , 13) , ENTRY(0 , 0) , ENTRY(0 , 0) ,
 #undef ENTRY
 };
 
@@ -805,50 +808,25 @@ build_decode_table(u32 decode_table[],
 		u32 entry;
 		unsigned i;
 
-		/*
-		 * The DEFLATE RFC explicitly allows the offset code to be
-		 * incomplete in two cases: a code containing just 1 codeword,
-		 * if that codeword has length 1; and a code containing no
-		 * codewords.  Note: the list of offset codeword lengths is
-		 * always nonempty, but lengths of 0 don't count as codewords.
-		 *
-		 * The RFC doesn't say whether the same cases are allowed for
-		 * the litlen and pre codes.  It's actually impossible for no
-		 * symbols to be used from these codes; however, it's
-		 * technically possible for only one symbol to be used.  zlib
-		 * allows 1 codeword for the litlen code, but not the precode.
-		 * The RFC also doesn't say whether, when there is 1 codeword,
-		 * that codeword is '0' or '1'.  zlib uses '0'.
-		 *
-		 * We accept what zlib accepts, plus a bit more.  First, we
-		 * don't treat the precode more strictly than the litlen and
-		 * offset codes.  There's no convincing reason to add a special
-		 * case for the precode here.
-		 *
-		 * Second, we just map each allowed incompete code to a complete
-		 * code with only real symbols.  To do this, we choose a symbol,
-		 * either the used symbol (for codes with 1 codeword) or an
-		 * arbitrary symbol (for empty codes), and give it both
-		 * codewords '0' and '1'.  zlib instead uses a special ERROR
-		 * symbol in the part of the codespace the code doesn't use.
-		 * However, having an ERROR symbol reduces the performance of
-		 * the Huffman decoder, for no real benefit.  Our approach also
-		 * avoids having to decide whether '0' or '1' is correct.
-		 *
-		 * Like zlib, we still reject all incomplete codes that contain
-		 * more than 1 codeword or a codeword length greater than 1.
-		 */
+		/* Incomplete codes retain invalid entries for unused codewords. */
+		if (decode_results == precode_decode_results)
+			return false;
+		entry = decode_results == offset_decode_results ? 0 :
+			HUFFDEC_EXCEPTIONAL | HUFFDEC_END_OF_BLOCK | HUFFDEC_INVALID;
+		entry += (1 << 8) + 1;
 		if (codespace_used == 0) {
-			sym = 0; /* arbitrary */
+			for (i = 0; i < (1U << table_bits); i++)
+				decode_table[i] = entry;
 		} else {
+			u32 valid_entry;
 			if (codespace_used != (1U << (max_codeword_len - 1)) ||
 			    len_counts[1] != 1)
 				return false;
-			sym = sorted_syms[0];
+			valid_entry = make_decode_table_entry(decode_results,
+							     sorted_syms[0], 1);
+			for (i = 0; i < (1U << table_bits); i++)
+				decode_table[i] = (i & 1) ? entry : valid_entry;
 		}
-		entry = make_decode_table_entry(decode_results, sym, 1);
-		for (i = 0; i < (1U << table_bits); i++)
-			decode_table[i] = entry;
 		return true;
 	}
 

@@ -8,12 +8,15 @@ use std::{collections::hash_map::DefaultHasher, hash::Hasher};
 use fastnbt::{nbt, LongArray, Value};
 
 mod region;
+mod region_decompression;
 mod rogue_chunks;
 mod section_data;
 mod complete_chunk;
 #[cfg(feature = "render")]
 mod standard_chunks;
 mod unicode_chunk;
+mod heightmaps;
+mod water_depth;
 
 #[test]
 fn nbt_macro_use() {

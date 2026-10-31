@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use super::util::parse_region_filename;
 use crate::anvil::modern::ChunkData;
 use crate::anvil::region::RegionLoader;
-use crate::anvil::{RegionFileLoader, RenderedPalette, Rgba};
+use crate::anvil::{RegionFileLoader, RenderedPalette};
 use crate::output::{emit_if_json, is_json};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -73,7 +73,7 @@ struct AnalyzeResult<'a> {
 fn get_palette(path: &Path) -> Result<RenderedPalette> {
     info!("Loading palette from: {}", path.display());
     let bytes = std::fs::read(path)?;
-    let blockstates: HashMap<String, Rgba> = serde_json::from_slice(&bytes)?;
+    let blockstates: crate::anvil::modern::render::BlockColors = serde_json::from_slice(&bytes)?;
     info!(
         "Palette loaded successfully: {} block states",
         blockstates.len()

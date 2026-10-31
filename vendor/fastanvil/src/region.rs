@@ -8,6 +8,8 @@ use num_enum::TryFromPrimitive;
 
 use crate::{Error, Result};
 
+mod decompression;
+
 /// the size in bytes of a 'sector' in a region file. Sectors are Minecraft's size unit
 /// for chunks. For example, a chunk might be `3 * SECTOR_SIZE` bytes. The
 /// actual compressed bytes of a chunk may be smaller and the exact value is
@@ -34,6 +36,8 @@ pub struct Region<S> {
     stream: S,
     // last offset is always the next valid place to write a chunk.
     offsets: Vec<u64>,
+    decoder: decompression::Decoder,
+    compressed: Vec<u8>,
 }
 
 impl<S> Region<S>
@@ -80,6 +84,8 @@ where
         let mut tmp = Self {
             stream,
             offsets: vec![],
+            decoder: Default::default(),
+            compressed: Vec::new(),
         };
 
         let mut max_offset = 0;
@@ -130,30 +136,53 @@ where
     /// # }
     ///  ```
     pub fn read_chunk(&mut self, x: usize, z: usize) -> Result<Option<Vec<u8>>> {
-        self.compression_scheme(x, z)?
-            .map(|scheme| match scheme {
-                CompressionScheme::Zlib => {
-                    let mut decoder = flate2::write::ZlibDecoder::new(vec![]);
-                    self.read_compressed_chunk(x, z, &mut decoder)?;
-                    Ok(decoder.finish()?)
+        let mut output = Vec::new();
+        Ok(self.read_chunk_into(x, z, &mut output)?.then_some(output))
+    }
+
+    /// Decode into a reusable buffer. Returns false when the chunk is absent.
+    pub fn read_chunk_into(&mut self, x: usize, z: usize, output: &mut Vec<u8>) -> Result<bool> {
+        output.clear();
+        let Some(location) = self.location(x, z)? else {
+            return Ok(false);
+        };
+        self.stream
+            .seek(SeekFrom::Start(location.offset * SECTOR_SIZE as u64))?;
+        let mut header = [0; CHUNK_HEADER_SIZE];
+        self.stream.read_exact(&mut header)?;
+        let metadata = ChunkMeta::new(&header)?;
+        self.compressed.clear();
+        (&mut self.stream)
+            .take(metadata.compressed_len as u64)
+            .read_to_end(&mut self.compressed)?;
+        let input = self.compressed.as_slice();
+        match metadata.compression_scheme {
+            scheme @ (CompressionScheme::Zlib | CompressionScheme::Gzip) => {
+                if self.decoder.decode(&scheme, input, output)? {
+                    return Ok(true);
                 }
-                CompressionScheme::Gzip => {
-                    let mut decoder = flate2::write::GzDecoder::new(vec![]);
-                    self.read_compressed_chunk(x, z, &mut decoder)?;
-                    Ok(decoder.finish()?)
+                // Preserve the streaming decoder's historical handling of unusual streams.
+                match scheme {
+                    CompressionScheme::Zlib => {
+                        let mut decoder = flate2::write::ZlibDecoder::new(output);
+                        decoder.write_all(input)?;
+                        decoder.finish()?;
+                    }
+                    CompressionScheme::Gzip => {
+                        let mut decoder = flate2::write::GzDecoder::new(output);
+                        decoder.write_all(input)?;
+                        decoder.finish()?;
+                    }
+                    _ => unreachable!(),
                 }
-                CompressionScheme::Uncompressed => {
-                    let mut buf = vec![];
-                    self.read_compressed_chunk(x, z, &mut buf)?;
-                    Ok(buf)
-                }
-                CompressionScheme::Lz4 => {
-                    let mut decoder = Lz4DecoderWrapper::new(vec![]);
-                    self.read_compressed_chunk(x, z, &mut decoder)?;
-                    Ok(decoder.finish()?)
-                }
-            })
-            .transpose()
+            }
+            CompressionScheme::Uncompressed => output.extend_from_slice(input),
+            CompressionScheme::Lz4 => {
+                let mut decoder = lz4_java_wrc::Lz4BlockInput::new(Cursor::new(input));
+                io::copy(&mut decoder, output)?;
+            }
+        }
+        Ok(true)
     }
 
     /// Get the location of the chunk in the stream.
@@ -174,35 +203,6 @@ where
         let sectors = buf[3] as u64;
 
         Ok((offset != 0 || sectors != 0).then_some(ChunkLocation { offset, sectors }))
-    }
-
-    /// Low level method. Read a compressed chunk into the given writer. The
-    /// `compression_scheme` method can be used to discover how the chunk
-    /// written is compressed, allowing you to write directly to a decompresser.
-    ///
-    /// Returns a bool indicating if a chunk was found at the given x,z.
-    fn read_compressed_chunk(
-        &mut self,
-        x: usize,
-        z: usize,
-        writer: &mut dyn Write,
-    ) -> Result<bool> {
-        let Some(loc) = self.location(x, z)? else {
-            return Ok(false);
-        };
-
-        self.stream
-            .seek(SeekFrom::Start(loc.offset * SECTOR_SIZE as u64))?;
-
-        let mut buf = [0u8; 5];
-        self.stream.read_exact(&mut buf)?;
-        let metadata = ChunkMeta::new(&buf)?;
-
-        let mut adapted = (&mut self.stream).take(metadata.compressed_len as u64);
-
-        io::copy(&mut adapted, writer)?;
-
-        Ok(true)
     }
 
     /// Return the inner buffer used. The buffer is rewound to the logical end
@@ -255,28 +255,6 @@ where
         Ok(self.stream)
     }
 
-    /// Low level method. Get the compression scheme that a given chunk is
-    /// compressed with in the region. Used in conjuction with
-    /// `read_compressed_chunk`.
-    fn compression_scheme(&mut self, x: usize, z: usize) -> Result<Option<CompressionScheme>> {
-        if x >= 32 || z >= 32 {
-            return Err(Error::InvalidOffset(x as isize, z as isize));
-        }
-
-        let Some(loc) = self.location(x, z)? else {
-            return Ok(None);
-        };
-
-        self.stream
-            .seek(SeekFrom::Start(loc.offset * SECTOR_SIZE as u64))?;
-
-        let mut buf = [0u8; 5];
-        self.stream.read_exact(&mut buf)?;
-        let metadata = ChunkMeta::new(&buf)?;
-
-        Ok(Some(metadata.compression_scheme))
-    }
-
     /// Create an iterator for the chunks of the region. Chunks not present in
     /// the file are skipped.
     pub fn iter(&mut self) -> RegionIter<'_, S> {
@@ -310,6 +288,8 @@ where
         Ok(Self {
             stream,
             offsets: vec![2], // 2 is the end of the header
+            decoder: Default::default(),
+            compressed: Vec::new(),
         })
     }
 
@@ -572,10 +552,7 @@ impl ChunkMeta {
     }
 }
 
-/// Wrapper type used to decompress a LZ4 chunk, needed because `lz4_java_wrc::Lz4BlockInput`
-/// expects a reader as input, while `self.read_compressed_chunk` expects a decoder that can be
-/// written to. The solution is to use an intermediate buffer, and decompress on the call to
-/// `.finish()`.
+/// Adapts written LZ4 bytes to the reader-based decoder, then writes the decoded payload.
 pub struct Lz4DecoderWrapper<W: Write> {
     buf: Vec<u8>,
     write_to: W,

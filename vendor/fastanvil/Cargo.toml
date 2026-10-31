@@ -66,6 +66,9 @@ harness = false
 [dependencies.bit_field]
 version = "0.10"
 
+[dependencies.ahash]
+version = "0.8.12"
+
 [dependencies.byteorder]
 version = "1.3"
 
@@ -85,6 +88,10 @@ version = "0.4"
 
 [dependencies.lz4-java-wrc]
 version = "0.2.0"
+
+[dependencies.libdeflate-sys]
+version = "1.26.1"
+path = "../libdeflate-sys"
 
 [dependencies.num_enum]
 version = "0.5"

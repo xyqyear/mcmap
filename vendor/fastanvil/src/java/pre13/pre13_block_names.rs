@@ -22,8 +22,8 @@ macro_rules! coloured_block {
             _ => unreachable!(),
         };
         Block {
-            name: format!("minecraft:{col}_{}", $a),
-            encoded: format!("minecraft:{col}_{}|", $a),
+            name: (format!("minecraft:{col}_{}", $a)).into(),
+            encoded: (format!("minecraft:{col}_{}|", $a)).into(),
             archetype: BlockArchetype::Normal,
         }
     }};
@@ -62,8 +62,8 @@ fn modern_block(block_name: &'static str, data_value: u8) -> Block {
                 _ => unreachable!(),
             };
             Block {
-                name: format!("{kind}_slab"),
-                encoded: format!("{kind}_slab|type=double"),
+                name: (format!("{kind}_slab")).into(),
+                encoded: (format!("{kind}_slab|type=double")).into(),
                 archetype: BlockArchetype::Normal,
             }
         }
@@ -86,8 +86,8 @@ fn modern_block(block_name: &'static str, data_value: u8) -> Block {
                 _ => unreachable!(),
             };
             Block {
-                name: format!("{kind}_slab"),
-                encoded: format!("{kind}_slab|type={top}"),
+                name: (format!("{kind}_slab")).into(),
+                encoded: (format!("{kind}_slab|type={top}")).into(),
                 archetype: BlockArchetype::Normal,
             }
         }
@@ -107,8 +107,8 @@ fn modern_block(block_name: &'static str, data_value: u8) -> Block {
                 _ => unreachable!(),
             };
             Block {
-                name: ns(kind),
-                encoded: enc0(kind),
+                name: (ns(kind)).into(),
+                encoded: (enc0(kind)).into(),
                 archetype: BlockArchetype::Normal,
             }
         }
@@ -122,8 +122,8 @@ fn modern_block(block_name: &'static str, data_value: u8) -> Block {
                 _ => unreachable!(),
             };
             Block {
-                name: ns(kind),
-                encoded: enc0(kind),
+                name: (ns(kind)).into(),
+                encoded: (enc0(kind)).into(),
                 archetype: BlockArchetype::Normal,
             }
         }
@@ -137,8 +137,8 @@ fn modern_block(block_name: &'static str, data_value: u8) -> Block {
                 _ => unreachable!(),
             };
             Block {
-                name: ns(kind),
-                encoded: enc0(kind),
+                name: (ns(kind)).into(),
+                encoded: (enc0(kind)).into(),
                 archetype: BlockArchetype::Normal,
             }
         }
@@ -156,8 +156,8 @@ fn modern_block(block_name: &'static str, data_value: u8) -> Block {
                 _ => unreachable!(),
             };
             Block {
-                name: format!("{kind}_slab"),
-                encoded: format!("{kind}_slab|type=double"),
+                name: (format!("{kind}_slab")).into(),
+                encoded: (format!("{kind}_slab|type=double")).into(),
                 archetype: BlockArchetype::Normal,
             }
         }
@@ -181,14 +181,14 @@ fn modern_block(block_name: &'static str, data_value: u8) -> Block {
                 _ => unreachable!(),
             };
             Block {
-                name: format!("{kind}_slab"),
-                encoded: format!("{kind}_slab|type={top}"),
+                name: (format!("{kind}_slab")).into(),
+                encoded: (format!("{kind}_slab|type={top}")).into(),
                 archetype: BlockArchetype::Normal,
             }
         }
         "double_stone_slab2" => Block {
-            name: ns("red_sandstone_slab"),
-            encoded: enc0("red_sandstone_slab|type=double"),
+            name: (ns("red_sandstone_slab")).into(),
+            encoded: (enc0("red_sandstone_slab|type=double")).into(),
             archetype: BlockArchetype::Normal,
         },
         "stone_slab2" => {
@@ -199,8 +199,8 @@ fn modern_block(block_name: &'static str, data_value: u8) -> Block {
                 _ => unreachable!(),
             };
             Block {
-                name: ns("red_sandstone_slab"),
-                encoded: format!("red_sandstone_slab|type={top}"),
+                name: (ns("red_sandstone_slab")).into(),
+                encoded: (format!("red_sandstone_slab|type={top}")).into(),
                 archetype: BlockArchetype::Normal,
             }
         }
@@ -221,8 +221,8 @@ fn modern_block(block_name: &'static str, data_value: u8) -> Block {
                 _ => unreachable!(),
             };
             Block {
-                name: ns(kind),
-                encoded: enc0(kind),
+                name: (ns(kind)).into(),
+                encoded: (enc0(kind)).into(),
                 archetype: BlockArchetype::Normal,
             }
         }
@@ -238,8 +238,8 @@ fn modern_block(block_name: &'static str, data_value: u8) -> Block {
                 _ => unreachable!(),
             };
             Block {
-                name: ns(kind),
-                encoded: enc0(kind),
+                name: (ns(kind)).into(),
+                encoded: (enc0(kind)).into(),
                 archetype: BlockArchetype::Normal,
             }
         }
@@ -252,8 +252,8 @@ fn modern_block(block_name: &'static str, data_value: u8) -> Block {
                 _ => unreachable!(),
             };
             Block {
-                name: ns(kind),
-                encoded: enc0(kind),
+                name: (ns(kind)).into(),
+                encoded: (enc0(kind)).into(),
                 archetype: BlockArchetype::Normal,
             }
         }
@@ -270,8 +270,8 @@ fn modern_block(block_name: &'static str, data_value: u8) -> Block {
                 _ => unreachable!(),
             };
             Block {
-                name: ns(kind),
-                encoded: enc0(kind),
+                name: (ns(kind)).into(),
+                encoded: (enc0(kind)).into(),
                 archetype: BlockArchetype::Normal,
             }
         }
@@ -285,8 +285,8 @@ fn modern_block(block_name: &'static str, data_value: u8) -> Block {
                 _ => unreachable!(),
             };
             Block {
-                name: ns(leaf),
-                encoded: enc0(leaf),
+                name: (ns(leaf)).into(),
+                encoded: (enc0(leaf)).into(),
                 archetype: BlockArchetype::Normal,
             }
         }
@@ -299,8 +299,8 @@ fn modern_block(block_name: &'static str, data_value: u8) -> Block {
                 _ => unreachable!(),
             };
             Block {
-                name: ns(leaf),
-                encoded: enc0(leaf),
+                name: (ns(leaf)).into(),
+                encoded: (enc0(leaf)).into(),
                 archetype: BlockArchetype::Normal,
             }
         }
@@ -322,8 +322,8 @@ fn modern_block(block_name: &'static str, data_value: u8) -> Block {
                 _ => unreachable!(),
             };
             Block {
-                name: ns(log),
-                encoded: format!("minecraft:{log}|axis={axis}"),
+                name: (ns(log)).into(),
+                encoded: (format!("minecraft:{log}|axis={axis}")).into(),
                 archetype: BlockArchetype::Normal,
             }
         }
@@ -344,16 +344,16 @@ fn modern_block(block_name: &'static str, data_value: u8) -> Block {
                 _ => unreachable!(),
             };
             Block {
-                name: ns(log),
-                encoded: format!("minecraft:{log}|axis={axis}"),
+                name: (ns(log)).into(),
+                encoded: (format!("minecraft:{log}|axis={axis}")).into(),
                 archetype: BlockArchetype::Normal,
             }
         }
         "snow_layer" => {
             let layers = (data_value & 0b0111) + 1;
             Block {
-                name: ns("snow"),
-                encoded: format!("minecraft:snow|layers={layers}"),
+                name: (ns("snow")).into(),
+                encoded: (format!("minecraft:snow|layers={layers}")).into(),
                 archetype: BlockArchetype::Normal,
             }
         }
@@ -378,29 +378,29 @@ fn modern_block(block_name: &'static str, data_value: u8) -> Block {
                 _ => unreachable!(),
             };
             Block {
-                name: format!("minecraft:{col}_terracotta"),
-                encoded: format!("minecraft:{col}_terracotta|"),
+                name: (format!("minecraft:{col}_terracotta")).into(),
+                encoded: (format!("minecraft:{col}_terracotta|")).into(),
                 archetype: BlockArchetype::Normal,
             }
         }
         "hardened_clay" => Block {
-            name: ns("terracotta"),
-            encoded,
+            name: (ns("terracotta")).into(),
+            encoded: encoded.into(),
             archetype: BlockArchetype::Normal,
         },
         "tallgrass" => Block {
-            name: ns("tall_grass"),
-            encoded,
+            name: (ns("tall_grass")).into(),
+            encoded: encoded.into(),
             archetype: BlockArchetype::Normal,
         },
         "waterlily" => Block {
-            name: ns("lily_pad"),
-            encoded,
+            name: (ns("lily_pad")).into(),
+            encoded: encoded.into(),
             archetype: BlockArchetype::Normal,
         },
         _ => Block {
-            name: ns(block_name),
-            encoded,
+            name: (ns(block_name)).into(),
+            encoded: encoded.into(),
             archetype: BlockArchetype::Normal,
         },
     }

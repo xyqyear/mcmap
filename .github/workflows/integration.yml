@@ -9,33 +9,57 @@ permissions:
 
 jobs:
   build:
-    name: Build mcmap binary
-    runs-on: ubuntu-latest
-    outputs:
-      artifact-name: ${{ steps.upload.outputs.artifact-name }}
+    name: Build and verify ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    env:
+      CARGO_BUILD_TARGET: ${{ matrix.target }}
     steps:
       - uses: actions/checkout@v6
 
+      - name: Install musl tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: integration-build
+          key: integration-build-${{ matrix.target }}
 
       - name: Build release binary
-        run: cargo build --release
+        run: cargo build --release --locked
 
       - name: Verify Minecraft chunk compatibility
+        shell: bash
         run: |
-          cargo test --locked -p fastanvil --lib
+          cargo test --locked -p fastanvil --lib --features flate2/zlib-rs
+          cargo test --locked --bin mcmap
           cargo test --locked --test minecraft_26_3
+
+      - name: Verify optimized arithmetic and native decoding
+        shell: bash
+        run: |
+          cargo test --release --locked -p fastanvil --lib --features flate2/zlib-rs render::tests
+          cargo test --release --locked -p fastanvil --lib --features flate2/zlib-rs test::region_decompression::
 
       - name: Upload mcmap binary
         id: upload
         uses: actions/upload-artifact@v7
         with:
-          name: mcmap-bin
-          path: target/release/mcmap
+          name: ${{ matrix.target == 'x86_64-unknown-linux-gnu' && 'mcmap-bin' || format('mcmap-bin-{0}', matrix.target) }}
+          path: target/${{ matrix.target }}/release/mcmap${{ runner.os == 'Windows' && '.exe' || '' }}
           if-no-files-found: error
           retention-days: 1
 

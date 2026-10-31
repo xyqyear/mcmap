@@ -91,7 +91,18 @@ impl Chunk for JavaChunk {
             self.recalculate_heightmap(mode);
             heightmap = self.level.lazy_heightmap.read().unwrap();
         }
-        heightmap.unwrap()[z * 16 + x] as isize
+        heightmap.as_ref().unwrap()[z * 16 + x] as isize
+    }
+
+    fn surface_heights(&self, mode: HeightMode) -> [isize; 256] {
+        let mut heightmap = self.level.lazy_heightmap.read().unwrap();
+        if heightmap.is_none() {
+            drop(heightmap);
+            self.recalculate_heightmap(mode);
+            heightmap = self.level.lazy_heightmap.read().unwrap();
+        }
+        let heights = heightmap.as_ref().unwrap();
+        std::array::from_fn(|index| heights[index] as isize)
     }
 
     fn biome(&self, x: usize, _y: isize, z: usize) -> Option<Biome> {

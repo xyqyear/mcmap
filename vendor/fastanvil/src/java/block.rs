@@ -9,8 +9,8 @@ mod tests;
 
 #[derive(Debug, Clone)]
 pub struct Block {
-    pub(crate) name: String,
-    pub(crate) encoded: String,
+    pub(crate) name: Cow<'static, str>,
+    pub(crate) encoded: Cow<'static, str>,
     pub(crate) archetype: BlockArchetype,
 }
 
@@ -54,10 +54,18 @@ impl Block {
             if !name.contains(':') {
                 name = Cow::Owned(format!("minecraft:{name}"));
             }
-            let defaults = super::default_states_26_3::properties(&name);
+            let default = super::default_states_26_3::state(&name);
             if properties.0.is_empty() {
-                return Self::from_properties(name, defaults.iter().copied());
+                if let Some(default) = default {
+                    return Self {
+                        name: Cow::Borrowed(default.name),
+                        encoded: Cow::Borrowed(default.encoded),
+                        archetype: Self::archetype(default.name, default.snowy),
+                    };
+                }
+                return Self::from_properties(name, std::iter::empty());
             }
+            let defaults = default.map(|state| state.properties).unwrap_or(&[]);
             for &(key, value) in defaults {
                 if !properties.0.iter().any(|(present, _)| present == key) {
                     properties
@@ -101,20 +109,24 @@ impl Block {
             encoded.push('=');
             encoded.push_str(value);
         }
-        let archetype = if snowy {
+        let archetype = Self::archetype(&name, snowy);
+
+        Self {
+            name: Cow::Owned(name.into_owned()),
+            archetype,
+            encoded: Cow::Owned(encoded),
+        }
+    }
+
+    fn archetype(name: &str, snowy: bool) -> BlockArchetype {
+        if snowy {
             BlockArchetype::Snowy
-        } else if is_watery(&name) {
+        } else if is_watery(name) {
             BlockArchetype::Watery
-        } else if is_airy(&name) {
+        } else if is_airy(name) {
             BlockArchetype::Airy
         } else {
             BlockArchetype::Normal
-        };
-
-        Self {
-            name: name.into_owned(),
-            archetype,
-            encoded,
         }
     }
 }

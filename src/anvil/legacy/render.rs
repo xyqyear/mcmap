@@ -21,6 +21,9 @@ use crate::anvil::pipeline::{RenderEngine, Rgba};
 
 const SECTION_Y_MAX: i32 = 255;
 
+#[cfg(test)]
+mod tests;
+
 /// Pre-1.13 top-shade renderer. Plugs into the shared region pipeline; the
 /// format tag selects which NBT decoder to run.
 pub struct LegacyTopShadeRenderer<'a> {
@@ -33,7 +36,12 @@ impl<'a> LegacyTopShadeRenderer<'a> {
         Self { palette, format }
     }
 
-    fn render_column(&self, chunk: &LegacyChunkData, x: usize, z: usize) -> (Rgba, i32) {
+    fn render_column(
+        &self,
+        chunk: &LegacyChunkData,
+        x: usize,
+        z: usize,
+    ) -> (Rgba, i32, Option<i32>) {
         // HeightMap is "Y of first skylit block" — i.e. one above the top
         // opaque block. Subtract one to start at that top block. If the
         // heightmap is absent or obviously bogus, fall back to scanning from
@@ -45,6 +53,7 @@ impl<'a> LegacyTopShadeRenderer<'a> {
 
         let mut acc = [0f32; 4];
         let mut surface: Option<i32> = None;
+        let mut raw_surface = None;
 
         let mut y = start_y;
         while y >= 0 {
@@ -53,6 +62,8 @@ impl<'a> LegacyTopShadeRenderer<'a> {
                 y -= 1;
                 continue;
             }
+            // Neighbour shading follows nonzero IDs even when their palette colour is transparent.
+            raw_surface.get_or_insert(y);
             let color = self.palette.lookup(id, meta);
             if color[3] == 0 {
                 y -= 1;
@@ -69,12 +80,50 @@ impl<'a> LegacyTopShadeRenderer<'a> {
         }
 
         let rgba = finalize(acc);
-        (rgba, surface.unwrap_or(0))
+        (rgba, surface.unwrap_or(0), raw_surface)
     }
+}
+
+pub enum NorthBoundary {
+    Heights([Option<i32>; 16]),
+    Deferred(Box<LegacyChunkData>),
 }
 
 impl<'a> RenderEngine for LegacyTopShadeRenderer<'a> {
     type Chunk = LegacyChunkData;
+    type Boundary = NorthBoundary;
+    fn boundary(&self, chunk: LegacyChunkData) -> NorthBoundary {
+        NorthBoundary::Deferred(Box::new(chunk))
+    }
+    fn render_chunk(
+        &self,
+        chunk: LegacyChunkData,
+        north: Option<&NorthBoundary>,
+    ) -> ([Rgba; 256], NorthBoundary) {
+        let mut out = [[0u8; 4]; 16 * 16];
+        let mut previous_row = [None; 16];
+        for z in 0..16usize {
+            for x in 0..16usize {
+                let (color, height, raw_surface) = self.render_column(&chunk, x, z);
+                let neighbour_height = if z == 0 {
+                    // Top row of the chunk uses the south-most row of the
+                    // chunk immediately above (to the north in world coords).
+                    north
+                        .and_then(|n| match n {
+                            NorthBoundary::Heights(heights) => heights[x],
+                            NorthBoundary::Deferred(chunk) => surface_height(chunk, x, 15),
+                        })
+                        .unwrap_or(height)
+                } else {
+                    previous_row[x].unwrap_or(height)
+                };
+                let shaded = apply_shade(color, height, neighbour_height);
+                out[z * 16 + x] = shaded;
+                previous_row[x] = raw_surface;
+            }
+        }
+        (out, NorthBoundary::Heights(previous_row))
+    }
 
     fn decode(&self, bytes: &[u8]) -> Result<Option<Self::Chunk>, String> {
         let decoded = match self.format {
@@ -84,31 +133,6 @@ impl<'a> RenderEngine for LegacyTopShadeRenderer<'a> {
             PaletteFormat::Legacy17 | PaletteFormat::Modern => LegacyChunkData::from_bytes(bytes),
         }?;
         Ok(Some(decoded))
-    }
-
-    fn render_chunk(
-        &self,
-        chunk: &LegacyChunkData,
-        north: Option<&LegacyChunkData>,
-    ) -> [Rgba; 16 * 16] {
-        let mut out = [[0u8; 4]; 16 * 16];
-        for z in 0..16usize {
-            for x in 0..16usize {
-                let (color, height) = self.render_column(chunk, x, z);
-                let neighbour_height = if z == 0 {
-                    // Top row of the chunk uses the south-most row of the
-                    // chunk immediately above (to the north in world coords).
-                    north
-                        .and_then(|n| surface_height(n, x, 15))
-                        .unwrap_or(height)
-                } else {
-                    surface_height(chunk, x, z - 1).unwrap_or(height)
-                };
-                let shaded = apply_shade(color, height, neighbour_height);
-                out[z * 16 + x] = shaded;
-            }
-        }
-        out
     }
 }
 
@@ -138,8 +162,7 @@ fn finalize(acc: [f32; 4]) -> Rgba {
     ]
 }
 
-/// Y of the top opaque block, for shading only. Cheaper than a full column
-/// composite — we only need a single number.
+/// First nonzero block ID used for northern-neighbour shading.
 fn surface_height(chunk: &LegacyChunkData, x: usize, z: usize) -> Option<i32> {
     let start_y = chunk
         .heightmap_at(x, z)

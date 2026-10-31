@@ -28,6 +28,9 @@ use std::ops::Range;
 pub use fastanvil::HeightMode;
 use fastanvil::{Block, Chunk, JavaChunk, biome::Biome, expand_heightmap};
 
+#[cfg(test)]
+mod tests;
+
 pub struct ChunkData {
     inner: JavaChunk,
     strategy: HeightmapStrategy,
@@ -157,12 +160,28 @@ impl Chunk for ChunkData {
         }
     }
 
+    fn surface_heights(&self, mode: HeightMode) -> [isize; 256] {
+        match (&self.strategy, mode) {
+            (HeightmapStrategy::Corrected { heightmap, .. }, HeightMode::Trust) => {
+                std::array::from_fn(|index| heightmap[index] as isize)
+            }
+            (HeightmapStrategy::ForceCalculate, _) => {
+                self.inner.surface_heights(HeightMode::Calculate)
+            }
+            _ => self.inner.surface_heights(mode),
+        }
+    }
+
     fn biome(&self, x: usize, y: isize, z: usize) -> Option<Biome> {
         self.inner.biome(x, y, z)
     }
 
     fn block(&self, x: usize, y: isize, z: usize) -> Option<&Block> {
         self.inner.block(x, y, z)
+    }
+
+    fn water_depth(&self, x: usize, y: isize, z: usize, y_min: isize) -> isize {
+        self.inner.water_depth(x, y, z, y_min)
     }
 
     fn y_range(&self) -> Range<isize> {

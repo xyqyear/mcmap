@@ -47,17 +47,22 @@ impl RegionMap {
 /// which NBT schema to use.
 pub trait RenderEngine {
     type Chunk;
+    type Boundary;
+
+    /// Retain a decoded northern seed without evaluating its heights.
+    fn boundary(&self, chunk: Self::Chunk) -> Self::Boundary;
+
+    /// Render one chunk and retain only what its southern neighbour needs.
+    fn render_chunk(
+        &self,
+        chunk: Self::Chunk,
+        north: Option<&Self::Boundary>,
+    ) -> ([Rgba; 256], Self::Boundary);
 
     /// Parse a chunk's decompressed NBT bytes into the engine's chunk shape.
     /// Returning `Ok(None)` signals "treat as empty" (used when the engine
     /// wants to skip a malformed chunk without failing the whole region).
     fn decode(&self, bytes: &[u8]) -> Result<Option<Self::Chunk>, String>;
-
-    /// Render a single chunk to 16×16 pixels. `north` is the chunk immediately
-    /// to the north (smaller z) in world coords — used for top-shading. When
-    /// the current chunk is at the top of a region, `north` may be the last
-    /// row of the region above; when the region above is missing, it's `None`.
-    fn render_chunk(&self, chunk: &Self::Chunk, north: Option<&Self::Chunk>) -> [Rgba; 16 * 16];
 }
 
 /// Drive one region through an engine. Returns `Ok(None)` when the region
@@ -77,16 +82,19 @@ pub fn render_region<E: RenderEngine>(
 
     // North-row cache: for top-shading continuity across the region boundary,
     // seed the "previous chunk" row with the southmost row of the region above.
-    // The cache also holds chunks from within the current region for per-row
-    // chaining.
-    let mut cache: [Option<E::Chunk>; 32] = Default::default();
+    // Rendered chunks retain their southern heights; unused seeds stay lazy.
+    let mut cache: [Option<E::Boundary>; 32] = Default::default();
+    let mut bytes = Vec::new();
     if let Ok(Some(mut r)) = loader.region(x, RCoord(z.0 - 1)) {
         for (cx, entry) in cache.iter_mut().enumerate() {
-            *entry = r
-                .read_chunk(cx, 31)
-                .ok()
-                .flatten()
-                .and_then(|b| engine.decode(&b).ok().flatten());
+            *entry = match r.read_chunk_into(cx, 31, &mut bytes) {
+                Ok(true) => engine
+                    .decode(&bytes)
+                    .ok()
+                    .flatten()
+                    .map(|chunk| engine.boundary(chunk)),
+                _ => None,
+            };
         }
     }
 
@@ -94,12 +102,12 @@ pub fn render_region<E: RenderEngine>(
         for (cx, cache) in cache.iter_mut().enumerate() {
             let data = map.chunk_mut(CCoord(cx as isize), CCoord(cz as isize));
 
-            let bytes = region
-                .read_chunk(cx, cz)
+            let present = region
+                .read_chunk_into(cx, cz, &mut bytes)
                 .map_err(|e| format!("Failed to read chunk: {}", e))?;
-            let Some(bytes) = bytes else {
+            if !present {
                 continue;
-            };
+            }
 
             let chunk = match engine.decode(&bytes) {
                 Ok(Some(c)) => c,
@@ -109,11 +117,14 @@ pub fn render_region<E: RenderEngine>(
                 }
             };
 
-            let rendered = engine.render_chunk(&chunk, cache.as_ref());
+            let (rendered, boundary) = engine.render_chunk(chunk, cache.as_ref());
             data.copy_from_slice(&rendered);
-            *cache = Some(chunk);
+            *cache = Some(boundary);
         }
     }
 
     Ok(Some(map))
 }
+
+#[cfg(test)]
+mod tests;

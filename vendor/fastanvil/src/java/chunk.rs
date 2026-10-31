@@ -3,7 +3,7 @@ use std::sync::RwLock;
 
 use serde::Deserialize;
 
-use crate::{biome::Biome, Block, Chunk, HeightMode};
+use crate::{biome::Biome, Block, BlockArchetype, Chunk, HeightMode};
 use crate::{expand_heightmap, Heightmaps, Section, SectionTower};
 
 use super::AIR;
@@ -20,7 +20,18 @@ impl Chunk for CurrentJavaChunk {
             self.recalculate_heightmap(mode);
             heightmap = self.lazy_heightmap.read().unwrap();
         }
-        heightmap.unwrap()[z * 16 + x] as isize
+        heightmap.as_ref().unwrap()[z * 16 + x] as isize
+    }
+
+    fn surface_heights(&self, mode: HeightMode) -> [isize; 256] {
+        let mut heightmap = self.lazy_heightmap.read().unwrap();
+        if heightmap.is_none() {
+            drop(heightmap);
+            self.recalculate_heightmap(mode);
+            heightmap = self.lazy_heightmap.read().unwrap();
+        }
+        let heights = heightmap.as_ref().unwrap();
+        std::array::from_fn(|index| heights[index] as isize)
     }
 
     fn biome(&self, x: usize, y: isize, z: usize) -> Option<Biome> {
@@ -40,6 +51,38 @@ impl Chunk for CurrentJavaChunk {
         let sec_y = (y - sec.y as isize * 16) as usize;
 
         Some(sec.block_states.at(x, sec_y, z).unwrap_or(&AIR))
+    }
+
+    fn water_depth(&self, x: usize, mut y: isize, z: usize, y_min: isize) -> isize {
+        let mut depth = 1;
+        let Some(sections) = self.sections.as_ref() else {
+            return depth;
+        };
+        while y > y_min {
+            let Some(section) = sections.get_section_for_y(y) else {
+                return depth;
+            };
+            let base = section.y as isize * 16;
+            let stop = y_min.max(base - 1);
+            let states = &section.block_states;
+            if let [block] = states.palette() {
+                if block.archetype == BlockArchetype::Watery && states.try_iter_indices().is_none() {
+                    depth += y - stop;
+                    y = stop;
+                    continue;
+                }
+            }
+            while y > stop {
+                match states.at(x, (y - base) as usize, z) {
+                    Some(block) if block.archetype == BlockArchetype::Watery => {
+                        depth += 1;
+                        y -= 1;
+                    }
+                    _ => return depth,
+                }
+            }
+        }
+        depth
     }
 
     fn y_range(&self) -> Range<isize> {

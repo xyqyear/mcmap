@@ -20,7 +20,9 @@
 use fastnbt::{IntArray, Value};
 use serde::Deserialize;
 
-use super::chunk::{LegacyChunkData, LegacySection, SECTION_BLOCKS};
+use super::chunk::{
+    LegacyChunkData, LegacySection, SECTION_BLOCKS, unpack_ids_with_add, unpack_nibbles,
+};
 
 /// NBT-facing root. Like `chunk::ChunkRoot` we tolerate sibling compounds at
 /// the root (mods like `ForgeDataVersion`, `ImmersiveEngineering`,
@@ -193,16 +195,14 @@ fn decode_section(sec: SectionNbt) -> Result<Option<LegacySection>, String> {
             // Vanilla pre-REI: `Blocks` is the low 8 bits of the block ID,
             // optional `Add` nibble is the high 4 bits, `Data` nibble is the
             // 4-bit metadata.
-            let add_bytes = add.as_ref().map(|a| a.as_ref());
-            for i in 0..SECTION_BLOCKS {
-                let lo_id = blocks[i] as u8 as u16;
-                let hi_id = match add_bytes {
-                    Some(a) if a.len() == SECTION_BLOCKS / 2 => nibble(a, i) as u16,
-                    _ => 0,
-                };
-                ids[i] = (hi_id << 8) | lo_id;
-                metas[i] = nibble(&data[..], i) as u16;
+            if let Some(add) = add.as_deref().filter(|a| a.len() == SECTION_BLOCKS / 2) {
+                unpack_ids_with_add(&mut ids, &blocks, add);
+            } else {
+                for i in 0..SECTION_BLOCKS {
+                    ids[i] = blocks[i] as u8 as u16;
+                }
             }
+            unpack_nibbles(&mut metas, &data);
         }
     }
 
@@ -216,5 +216,78 @@ fn nibble(arr: &[i8], i: usize) -> u8 {
         byte & 0x0F
     } else {
         (byte >> 4) & 0x0F
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fastnbt::ByteArray;
+
+    fn section() -> SectionNbt {
+        SectionNbt {
+            y: 0,
+            blocks: None,
+            add: None,
+            data: None,
+            palette: None,
+        }
+    }
+
+    #[test]
+    fn vanilla_ids_and_metadata_keep_every_even_and_odd_block() {
+        let mut blocks = vec![0i8; SECTION_BLOCKS];
+        let mut add = vec![0i8; SECTION_BLOCKS / 2];
+        let mut data = vec![0i8; SECTION_BLOCKS / 2];
+        for index in 0..SECTION_BLOCKS {
+            let id = ((index * 911 + 0xABC) & 0xFFF) as u16;
+            let meta = ((index * 7 + 3) & 0xF) as u8;
+            blocks[index] = id as i8;
+            add[index / 2] |= (((id >> 8) as u8) << (4 * (index % 2))) as i8;
+            data[index / 2] |= (meta << (4 * (index % 2))) as i8;
+        }
+        let decoded = decode_section(SectionNbt {
+            blocks: Some(ByteArray::new(blocks)),
+            add: Some(ByteArray::new(add)),
+            data: Some(ByteArray::new(data)),
+            ..section()
+        })
+        .unwrap()
+        .unwrap();
+        for index in 0..SECTION_BLOCKS {
+            assert_eq!(decoded.ids[index], ((index * 911 + 0xABC) & 0xFFF) as u16);
+            assert_eq!(decoded.metas[index], ((index * 7 + 3) & 0xF) as u16);
+        }
+    }
+
+    #[test]
+    fn invalid_add_remains_ignored_and_missing_blocks_remain_empty() {
+        let decoded = decode_section(SectionNbt {
+            blocks: Some(ByteArray::new(vec![-1; SECTION_BLOCKS])),
+            add: Some(ByteArray::new(vec![-1])),
+            data: Some(ByteArray::new(vec![0xA5u8 as i8; SECTION_BLOCKS / 2])),
+            ..section()
+        })
+        .unwrap()
+        .unwrap();
+        for index in 0..SECTION_BLOCKS {
+            assert_eq!(decoded.ids[index], 255);
+            assert_eq!(decoded.metas[index], if index % 2 == 0 { 5 } else { 10 });
+        }
+        assert!(
+            decode_section(SectionNbt {
+                data: Some(ByteArray::new(vec![0])),
+                ..section()
+            })
+            .unwrap()
+            .is_none()
+        );
+        assert!(matches!(
+            decode_section(SectionNbt {
+                blocks: Some(ByteArray::new(vec![0; SECTION_BLOCKS])),
+                ..section()
+            }),
+            Err(error) if error == "Section missing Data"
+        ));
     }
 }

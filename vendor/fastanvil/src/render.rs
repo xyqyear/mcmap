@@ -3,6 +3,8 @@ use std::{
     io::{Read, Seek, Write},
 };
 
+use once_cell::sync::OnceCell;
+
 use crate::{
     Block, BlockArchetype, CCoord, Chunk, HeightMode, JavaChunk, LoaderError, LoaderResult, RCoord,
     RegionLoader,
@@ -11,6 +13,16 @@ use crate::{
 use super::biome::Biome;
 
 pub type Rgba = [u8; 4];
+
+const LINEAR_CHANNELS: [f32; 256] = {
+    let mut values = [0.0; 256];
+    let mut channel = 0;
+    while channel < 256 {
+        values[channel] = (channel * channel) as f32 / (255 * 255) as f32;
+        channel += 1;
+    }
+    values
+};
 
 /// Palette can be used to take a block description to produce a colour that it
 /// should render to.
@@ -32,21 +44,46 @@ impl<'a, P: Palette> TopShadeRenderer<'a, P> {
     }
 
     pub fn render<C: Chunk + ?Sized>(&self, chunk: &C, north: Option<&C>) -> [Rgba; 16 * 16] {
+        self.render_with_north_heights(chunk, || {
+            north
+                .map(|chunk| std::array::from_fn(|x| chunk.surface_height(x, 15, self.height_mode)))
+        })
+        .0
+    }
+
+    /// Read northern heights only when rendering, and return the southern edge.
+    /// A skipped chunk has no computed edge and returns `None`.
+    pub fn render_with_north_heights<C: Chunk + ?Sized>(
+        &self,
+        chunk: &C,
+        north: impl FnOnce() -> Option<[isize; 16]>,
+    ) -> ([Rgba; 256], Option<[isize; 16]>) {
         let mut data = [[0, 0, 0, 0]; 16 * 16];
 
         let status = chunk.status();
-        const OK_STATUSES: [&str; 8] = ["full", "spawn", "postprocessed", "fullchunk", "minecraft:full", "minecraft:spawn", "minecraft:postprocessed", "minecraft:fullchunk"];
+        const OK_STATUSES: [&str; 8] = [
+            "full",
+            "spawn",
+            "postprocessed",
+            "fullchunk",
+            "minecraft:full",
+            "minecraft:spawn",
+            "minecraft:postprocessed",
+            "minecraft:fullchunk",
+        ];
         if !OK_STATUSES.contains(&status.as_str()) {
             // Chunks that have been fully generated will have a 'full' status.
             // Skip chunks that don't; the way they render is unpredictable.
-            return data;
+            return (data, None);
         }
 
         let y_range = chunk.y_range();
+        let heights = chunk.surface_heights(self.height_mode);
+        let north = once_cell::unsync::Lazy::new(north);
 
         for z in 0..16 {
             for x in 0..16 {
-                let air_height = chunk.surface_height(x, z, self.height_mode);
+                let air_height = heights[z * 16 + x];
                 let block_height = (air_height - 1).max(y_range.start);
 
                 let colour = self.drill_for_colour(x, block_height, z, chunk, y_range.start);
@@ -54,9 +91,10 @@ impl<'a, P: Palette> TopShadeRenderer<'a, P> {
                 let north_air_height = match z {
                     // if top of chunk, get height from the chunk above.
                     0 => north
-                        .map(|c| c.surface_height(x, 15, self.height_mode))
+                        .as_ref()
+                        .map(|heights| heights[x])
                         .unwrap_or(block_height),
-                    z => chunk.surface_height(x, z - 1, self.height_mode),
+                    z => heights[(z - 1) * 16 + x],
                 };
                 let colour = top_shade_colour(colour, air_height, north_air_height);
 
@@ -64,7 +102,7 @@ impl<'a, P: Palette> TopShadeRenderer<'a, P> {
             }
         }
 
-        data
+        (data, Some(heights[240..].try_into().unwrap()))
     }
 
     /// Drill for colour. Starting at y_start, make way down the column until we
@@ -93,7 +131,7 @@ impl<'a, P: Palette> TopShadeRenderer<'a, P> {
                     // heightmaps.
                     BlockArchetype::Watery => {
                         let mut block_colour = self.palette.pick(current_block, current_biome);
-                        let water_depth = water_depth(x, y, z, chunk, y_min);
+                        let water_depth = chunk.water_depth(x, y, z, y_min);
                         let alpha = water_depth_to_alpha(water_depth);
 
                         block_colour[3] = alpha;
@@ -135,36 +173,47 @@ fn water_depth_to_alpha(water_depth: isize) -> u8 {
     (180 + 2 * water_depth).min(250) as u8
 }
 
-fn water_depth<C: Chunk + ?Sized>(
-    x: usize,
-    mut y: isize,
-    z: usize,
-    chunk: &C,
-    y_min: isize,
-) -> isize {
-    let mut depth = 1;
-    while y > y_min {
-        let block = match chunk.block(x, y, z) {
-            Some(b) => b,
-            None => return depth,
-        };
-
-        if block.archetype == BlockArchetype::Watery {
-            depth += 1;
-        } else {
-            return depth;
-        }
-        y -= 1;
-    }
-    depth
-}
-
 /// Merge two potentially transparent colours, A and B, into one as if colour A
 /// was laid on top of colour B.
 ///
 /// See https://en.wikipedia.org/wiki/Alpha_compositing
 fn a_over_b_colour(colour: [u8; 4], below_colour: [u8; 4]) -> [u8; 4] {
-    let linear = |c: u8| (((c as usize).pow(2)) as f32) / ((255 * 255) as f32);
+    if colour[3] == 0 {
+        // The original floating-point round trip truncates some channels by one.
+        type FirstLayer = ([u8; 256], u8);
+        static FIRST_LAYERS: [OnceCell<FirstLayer>; 256] = [const { OnceCell::new() }; 256];
+        let (channels, alpha) = FIRST_LAYERS[below_colour[3] as usize].get_or_init(|| {
+            let alpha = below_colour[3];
+            (
+                std::array::from_fn(|channel| {
+                    a_over_b_colour_general([0; 4], [channel as u8, 0, 0, alpha])[0]
+                }),
+                a_over_b_colour_general([0; 4], [0, 0, 0, alpha])[3],
+            )
+        });
+        return [
+            channels[below_colour[0] as usize],
+            channels[below_colour[1] as usize],
+            channels[below_colour[2] as usize],
+            *alpha,
+        ];
+    }
+    if below_colour[3] == 255 {
+        // Every u8 foreground alpha gives an exactly-one output alpha here.
+        let alpha = LINEAR_CHANNELS[colour[3] as usize];
+        let remaining = 1.0 - alpha;
+        let component = |index: usize| {
+            let top = LINEAR_CHANNELS[colour[index] as usize];
+            let below = LINEAR_CHANNELS[below_colour[index] as usize];
+            ((top * alpha + below * remaining) * 255.0 * 255.0).sqrt() as u8
+        };
+        return [component(0), component(1), component(2), 255];
+    }
+    a_over_b_colour_general(colour, below_colour)
+}
+
+fn a_over_b_colour_general(colour: [u8; 4], below_colour: [u8; 4]) -> [u8; 4] {
+    let linear = |c: u8| LINEAR_CHANNELS[c as usize];
     let colour = colour.map(linear);
     let below_colour = below_colour.map(linear);
 
@@ -307,3 +356,6 @@ fn top_shade_colour(colour: Rgba, height: isize, shade_height: isize) -> Rgba {
         colour[3],
     ]
 }
+
+#[cfg(test)]
+mod tests;

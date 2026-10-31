@@ -2,6 +2,9 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "dynamic")]
+compile_error!("mcmap requires the vendored strict libdeflate implementation");
+
 fn main() {
     let dst = PathBuf::from(env::var_os("OUT_DIR").unwrap());
 

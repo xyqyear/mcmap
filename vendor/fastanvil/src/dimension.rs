@@ -2,7 +2,7 @@ use std::io::{Read, Seek, Write};
 use std::{error::Error, fmt::Display, ops::Range};
 
 use crate::Region;
-use crate::{biome::Biome, Block};
+use crate::{biome::Biome, Block, BlockArchetype};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct RCoord(pub isize);
@@ -26,6 +26,11 @@ pub trait Chunk: Send + Sync {
     /// Will panic if given x/z coordinates outside of 0..16.
     fn surface_height(&self, x: usize, z: usize, mode: HeightMode) -> isize;
 
+    /// Get the surface heights in z-major order.
+    fn surface_heights(&self, mode: HeightMode) -> [isize; 256] {
+        std::array::from_fn(|index| self.surface_height(index % 16, index / 16, mode))
+    }
+
     /// Get the biome of the given coordinate. A biome may not exist if the
     /// section of the chunk accessed is not present. For example,
     /// trying to access the block at height 1234 would return None.
@@ -35,6 +40,21 @@ pub trait Chunk: Send + Sync {
     /// section of the chunk accessed is not present. For example,
     /// trying to access the block at height 1234 would return None.
     fn block(&self, x: usize, y: isize, z: usize) -> Option<&Block>;
+
+    /// Count consecutive watery blocks above `y_min`, plus one.
+    fn water_depth(&self, x: usize, mut y: isize, z: usize, y_min: isize) -> isize {
+        let mut depth = 1;
+        while y > y_min {
+            match self.block(x, y, z) {
+                Some(block) if block.archetype == BlockArchetype::Watery => {
+                    depth += 1;
+                    y -= 1;
+                }
+                _ => break,
+            }
+        }
+        depth
+    }
 
     /// Get the range of Y values that are valid for this chunk.
     fn y_range(&self) -> Range<isize>;

@@ -30,7 +30,18 @@ impl Chunk for JavaChunk {
             self.recalculate_heightmap(mode);
             heightmap = self.level.lazy_heightmap.read().unwrap();
         }
-        heightmap.unwrap()[z * 16 + x] as isize
+        heightmap.as_ref().unwrap()[z * 16 + x] as isize
+    }
+
+    fn surface_heights(&self, mode: HeightMode) -> [isize; 256] {
+        let mut heightmap = self.level.lazy_heightmap.read().unwrap();
+        if heightmap.is_none() {
+            drop(heightmap);
+            self.recalculate_heightmap(mode);
+            heightmap = self.level.lazy_heightmap.read().unwrap();
+        }
+        let heights = heightmap.as_ref().unwrap();
+        std::array::from_fn(|index| heights[index] as isize)
     }
 
     fn biome(&self, x: usize, y: isize, z: usize) -> Option<Biome> {
@@ -202,8 +213,39 @@ impl SectionLike for Pre18Section {
 
 #[derive(Debug)]
 pub struct Pre18Blockstates {
-    unpacked: OnceCell<[u16; 16 * 16 * 16]>,
+    unpacked: OnceCell<Box<[u16; 16 * 16 * 16]>>,
+    padding: Option<Padding>,
     packed: PackedBits,
+}
+
+#[derive(Debug)]
+struct Padding {
+    bits: usize,
+    per_long: usize,
+    reciprocal: u64,
+    mask: u64,
+}
+
+impl Padding {
+    fn from_len(len: usize) -> Option<Self> {
+        // Array length determines padded width even when the palette implies another width.
+        let bits = match len {
+            256 => 4,
+            342 => 5,
+            410 => 6,
+            456 => 7,
+            512 => 8,
+            586 => 9,
+            _ => return None,
+        };
+        let per_long = 64 / bits;
+        Some(Self {
+            bits,
+            per_long,
+            reciprocal: ((1u64 << 32) + per_long as u64 - 1) / per_long as u64,
+            mask: (1u64 << bits) - 1,
+        })
+    }
 }
 
 impl Pre18Blockstates {
@@ -211,11 +253,19 @@ impl Pre18Blockstates {
     /// relative to the section ie 0..16
     #[inline(always)]
     pub fn state(&self, x: usize, sec_y: usize, z: usize, pal_len: usize) -> usize {
+        if let Some(padding) = &self.padding {
+            let index = (sec_y * 16 * 16) + z * 16 + x;
+            if index < 4096 {
+                let long = ((index as u64 * padding.reciprocal) >> 32) as usize;
+                let shift = (index - long * padding.per_long) * padding.bits;
+                return ((self.packed.0[long] as u64 >> shift) & padding.mask) as usize;
+            }
+        }
         let unpacked = self.unpacked.get_or_init(|| {
             let bits_per_item = bits_per_block(pal_len);
             let mut buf = [0u16; 16 * 16 * 16];
             self.packed.unpack_blockstates(bits_per_item, &mut buf);
-            buf
+            Box::new(buf)
         });
 
         let state_index = (sec_y * 16 * 16) + z * 16 + x;
@@ -247,7 +297,7 @@ impl Pre18Blockstates {
             let bits_per_item = bits_per_block(pal_len);
             let mut buf = [0u16; 16 * 16 * 16];
             self.packed.unpack_blockstates(bits_per_item, &mut buf);
-            buf
+            Box::new(buf)
         });
 
         unpacked.iter().map(|&i| i as usize)
@@ -261,8 +311,12 @@ impl<'de> Deserialize<'de> for Pre18Blockstates {
     {
         let packed: PackedBits = Deserialize::deserialize(d)?;
         Ok(Self {
+            padding: Padding::from_len(packed.0.len()),
             packed,
             unpacked: OnceCell::new(),
         })
     }
 }
+
+#[cfg(test)]
+mod packed_tests;

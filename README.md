@@ -91,6 +91,8 @@ is intentionally left alone so it stays reusable across runs.
 Minecraft 26.3 compact block states and older chunks in the same world are
 supported. See [chunk compatibility](MINECRAFT_COMPATIBILITY.md) for format
 details, default-state data and rendering failures.
+See [rendering performance](PERFORMANCE.md) for single-region execution,
+compatibility constraints and reproducible real-world benchmarks.
 
 ```bash
 # Basic rendering

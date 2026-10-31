@@ -31,6 +31,17 @@ impl Region {
     pub fn read_chunk(&mut self, x: usize, z: usize) -> Result<Option<Vec<u8>>, String> {
         self.inner.read_chunk(x, z).map_err(|e| e.to_string())
     }
+
+    pub fn read_chunk_into(
+        &mut self,
+        x: usize,
+        z: usize,
+        output: &mut Vec<u8>,
+    ) -> Result<bool, String> {
+        self.inner
+            .read_chunk_into(x, z, output)
+            .map_err(|e| e.to_string())
+    }
 }
 
 /// Region file loader

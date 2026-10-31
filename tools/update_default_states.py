@@ -14,26 +14,40 @@ def main() -> None:
         states = [state for state in block["states"] if state.get("default")]
         if len(states) != 1:
             raise ValueError(f"Expected one default state for {name}")
-        if properties := states[0].get("properties"):
-            defaults[name] = properties
+        defaults[name] = states[0].get("properties", {})
     lines = [
         "// Generated from the official Minecraft 26.3 block report by tools/update_default_states.py.",
+        "pub(super) struct DefaultState {",
+        "    pub name: &'static str,",
+        "    pub encoded: &'static str,",
+        "    pub properties: &'static [(&'static str, &'static str)],",
+        "    pub snowy: bool,",
+        "}",
+        "",
         "#[rustfmt::skip]",
-        "static DEFAULTS: &[(&str, &[(&str, &str)])] = &[",
+        "pub(super) static DEFAULTS: &[DefaultState] = &[",
     ]
     for name, properties in sorted(defaults.items()):
         pairs = ", ".join(
             f"({json.dumps(key)}, {json.dumps(value)})"
             for key, value in sorted(properties.items())
         )
-        lines.append(f"    ({json.dumps(name)}, &[{pairs}]),")
+        encoded = name + "|" + ",".join(
+            f"{key}={value}" for key, value in sorted(properties.items())
+            if key not in {"waterlogged", "powered"}
+        )
+        snowy = "true" if properties.get("snowy") == "true" else "false"
+        lines.append(
+            f"    DefaultState {{ name: {json.dumps(name)}, encoded: {json.dumps(encoded)}, "
+            f"properties: &[{pairs}], snowy: {snowy} }},"
+        )
     lines.extend([
         "];", "",
-        "pub(super) fn properties(name: &str) -> &'static [(&'static str, &'static str)] {",
-        "    DEFAULTS",
-        "        .binary_search_by_key(&name, |(id, _)| id)",
-        "        .map(|index| DEFAULTS[index].1)",
-        "        .unwrap_or(&[])",
+        "static BY_NAME: once_cell::sync::Lazy<ahash::AHashMap<&'static str, &'static DefaultState>> =",
+        "    once_cell::sync::Lazy::new(|| DEFAULTS.iter().map(|state| (state.name, state)).collect());",
+        "",
+        "pub(super) fn state(name: &str) -> Option<&'static DefaultState> {",
+        "    BY_NAME.get(name).copied()",
         "}", "",
     ])
     args.output.write_text("\n".join(lines), encoding="utf-8")

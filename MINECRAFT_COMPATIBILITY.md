@@ -39,7 +39,8 @@ The maintained [fastanvil dependency](vendor/fastanvil/UPSTREAM.md) reads both
 block-state formats directly through its `Block` deserializer. Modern chunks
 need one typed NBT decode; unknown fields are skipped without constructing a
 whole-chunk `Value` tree. Palette names and property strings borrow from the
-input while constructing the final owned block. Other chunk layouts retain
+input during construction; known default states borrow compiled names and
+encoded descriptions. Other chunk layouts retain
 fastanvil's older format decoders. Region files and their NBT are never rewritten
 by `render` or `analyze`.
 
@@ -48,9 +49,10 @@ come from the official 26.3 block report, rather than inferring them from model
 variant order or property names. Unknown modded blocks retain their explicit
 properties and the existing palette fallback; their omitted default properties
 cannot be reconstructed from a vanilla report.
-Default-only states read the static property slice directly; states with
-explicit overrides use a small property vector. Neither path uses a mutable
-global state cache. The generated lookup uses binary search over sorted IDs.
+Default-only states borrow a compiled template; states with explicit overrides
+use a small property vector. A read-only hash index over the finite official
+default-state table is initialized once. Input-derived states are not retained
+in a global cache, and custom palette colors remain specific to each invocation.
 
 A malformed chunk fails its region and emits a `region` event with `status:error`.
 Split rendering does not publish a PNG for that region. If no region succeeds,
@@ -73,10 +75,10 @@ uv run --no-project python tools/update_default_states.py \
   generated/reports/blocks.json vendor/fastanvil/src/java/default_states_26_3.rs
 ```
 
-The extractor requires exactly one default state per block and stores only blocks
-with default properties. The 26.3 report contains 1,286 blocks; 884 have default
-properties. The deterministic Rust lookup is compiled into the binary; it does
-not parse JSON or allocate a default-property registry at runtime. Explicit
+The extractor requires exactly one default state per block. The 26.3 report
+contains 1,286 blocks; 884 have default properties. The deterministic Rust
+templates are compiled into the binary; the runtime lookup index references
+those templates without parsing JSON or copying their strings. Explicit
 properties are merged with static defaults only for the modern representations;
 legacy `Name` entries retain their stored property semantics.
 

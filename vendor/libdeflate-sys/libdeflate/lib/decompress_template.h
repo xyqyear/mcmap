@@ -101,6 +101,7 @@ next_block:
 
 		STATIC_ASSERT(DEFLATE_NUM_OFFSET_SYMS == 1 + BITMASK(5));
 		num_offset_syms = 1 + ((bitbuf >> 8) & BITMASK(5));
+		SAFETY_CHECK(num_litlen_syms <= 286 && num_offset_syms <= 30);
 
 		STATIC_ASSERT(DEFLATE_NUM_PRECODE_SYMS == 4 + BITMASK(4));
 		num_explicit_precode_lens = 4 + ((bitbuf >> 13) & BITMASK(4));
@@ -328,6 +329,7 @@ next_block:
 
 	/* Decompressing a Huffman block (either dynamic or static) */
 
+	SAFETY_CHECK(d->u.l.lens[256] != 0);
 	SAFETY_CHECK(build_offset_decode_table(d, num_litlen_syms, num_offset_syms));
 	SAFETY_CHECK(build_litlen_decode_table(d, num_litlen_syms, num_offset_syms));
 have_decode_tables:
@@ -442,8 +444,10 @@ have_decode_tables:
 		if (unlikely(entry & HUFFDEC_EXCEPTIONAL)) {
 			/* Subtable pointer or end-of-block entry */
 
-			if (unlikely(entry & HUFFDEC_END_OF_BLOCK))
+			if (unlikely(entry & HUFFDEC_END_OF_BLOCK)) {
+				SAFETY_CHECK(!(entry & HUFFDEC_INVALID));
 				goto block_done;
+			}
 
 			/*
 			 * A subtable is required.  Load and consume the
@@ -477,8 +481,10 @@ have_decode_tables:
 				*out_next++ = lit;
 				continue;
 			}
-			if (unlikely(entry & HUFFDEC_END_OF_BLOCK))
+			if (unlikely(entry & HUFFDEC_END_OF_BLOCK)) {
+				SAFETY_CHECK(!(entry & HUFFDEC_INVALID));
 				goto block_done;
+			}
 			/* Else, it's a length that required a subtable. */
 		}
 
@@ -547,7 +553,7 @@ have_decode_tables:
 		offset += EXTRACT_VARBITS8(saved_bitbuf, entry) >> (u8)(entry >> 8);
 
 		/* Validate the match offset; needed even in the fastloop. */
-		SAFETY_CHECK(offset <= out_next - (const u8 *)out);
+		SAFETY_CHECK(offset != 0 && offset <= out_next - (const u8 *)out);
 		src = out_next - offset;
 		dst = out_next;
 		out_next += length;
@@ -702,8 +708,10 @@ generic_loop:
 			*out_next++ = length;
 			continue;
 		}
-		if (unlikely(entry & HUFFDEC_END_OF_BLOCK))
+		if (unlikely(entry & HUFFDEC_END_OF_BLOCK)) {
+			SAFETY_CHECK(!(entry & HUFFDEC_INVALID));
 			goto block_done;
+		}
 		length += EXTRACT_VARBITS8(saved_bitbuf, entry) >> (u8)(entry >> 8);
 		if (unlikely(length > out_end - out_next))
 			return LIBDEFLATE_INSUFFICIENT_SPACE;
@@ -724,7 +732,7 @@ generic_loop:
 		bitbuf >>= (u8)entry;
 		bitsleft -= entry;
 
-		SAFETY_CHECK(offset <= out_next - (const u8 *)out);
+		SAFETY_CHECK(offset != 0 && offset <= out_next - (const u8 *)out);
 		src = out_next - offset;
 		dst = out_next;
 		out_next += length;

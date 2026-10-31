@@ -10,6 +10,8 @@ use log::{error, info, warn};
 use rayon::prelude::*;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
 use super::util::{Rectangle, auto_size, parse_region_filename};
@@ -24,6 +26,26 @@ use crate::output::emit_if_json;
 const REGION_PX: u32 = 32 * 16; // 512 px per region side
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+#[cfg(test)]
+mod tests;
+
+fn save_image(image: &image::RgbaImage, path: &Path) -> image::ImageResult<()> {
+    if !matches!(
+        image::ImageFormat::from_path(path),
+        Ok(image::ImageFormat::Png)
+    ) {
+        return image.save(path);
+    }
+    use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+    let writer = BufWriter::new(File::create(path)?);
+    PngEncoder::new_with_quality(writer, CompressionType::Rle, FilterType::Sub).encode(
+        image.as_raw(),
+        image.width(),
+        image.height(),
+        image::ColorType::Rgba8,
+    )
+}
 
 #[derive(Args, Debug)]
 pub struct RenderArgs {
@@ -166,15 +188,8 @@ fn emit_phase(phase: &str) {
 pub fn execute(args: RenderArgs) -> Result<()> {
     let total_start = std::time::Instant::now();
 
-    if let Some(n) = args.threads {
-        if n == 0 {
-            return Err("--threads must be >= 1".into());
-        }
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(n)
-            .build_global()
-            .map_err(|e| format!("Failed to configure thread pool: {}", e))?;
-        info!("Worker threads: {}", n);
+    if args.threads == Some(0) {
+        return Err("--threads must be >= 1".into());
     }
 
     info!("Starting Minecraft map renderer");
@@ -255,6 +270,16 @@ pub fn execute(args: RenderArgs) -> Result<()> {
         .collect();
     let coords: Vec<(RCoord, RCoord)> = entries.iter().map(|(_, x, z)| (*x, *z)).collect();
     info!("Total unique regions: {}", entries.len());
+    let serial = entries.len() == 1 || args.threads == Some(1);
+    if !serial
+        && let Some(n) = args.threads
+    {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(n)
+            .build_global()
+            .map_err(|e| format!("Failed to configure thread pool: {}", e))?;
+        info!("Worker threads: {}", n);
+    }
 
     let palette_start = std::time::Instant::now();
     let pal = palette::load(&args.palette)?;
@@ -295,91 +320,92 @@ pub fn execute(args: RenderArgs) -> Result<()> {
 
         info!("Rendering regions (split mode)...");
         let render_start = std::time::Instant::now();
-        let saved: usize = entries
-            .into_par_iter()
-            .map(|(parent, x, z)| {
-                let loader = RegionFileLoader::new(parent.clone());
-                let src_path = parent.join(format!("r.{}.{}.mca", x.0, z.0));
-                match render_one(x, z, &loader, &pal, height_mode) {
-                    Ok(Some(map)) => {
-                        let img = region_to_image(&map);
-                        let path = out_dir.join(format!("r.{}.{}.png", x.0, z.0));
-                        let save_then_chown = img
-                            .save(&path)
-                            .map_err(|e| format!("save failed: {}", e))
-                            .and_then(|()| {
-                                chown::apply(&path).map_err(|e| format!("chown failed: {}", e))
-                            });
-                        match save_then_chown {
-                            Ok(()) => {
-                                let mut warnings: Vec<String> = Vec::new();
-                                if args.preserve_mtime {
-                                    if let Err(e) = copy_mtime(&src_path, &path) {
-                                        warn!(
-                                            "Saved {} but failed to copy mtime from {}: {}",
-                                            path.display(),
-                                            src_path.display(),
-                                            e
-                                        );
-                                        warnings.push(format!("mtime_copy_failed: {}", e));
-                                    }
+        let render_entry = |(parent, x, z): (PathBuf, RCoord, RCoord)| {
+            let loader = RegionFileLoader::new(parent.clone());
+            let src_path = parent.join(format!("r.{}.{}.mca", x.0, z.0));
+            match render_one(x, z, &loader, &pal, height_mode) {
+                Ok(Some(map)) => {
+                    let img = region_to_image(&map);
+                    let path = out_dir.join(format!("r.{}.{}.png", x.0, z.0));
+                    let save_then_chown = save_image(&img, &path)
+                        .map_err(|e| format!("save failed: {}", e))
+                        .and_then(|()| {
+                            chown::apply(&path).map_err(|e| format!("chown failed: {}", e))
+                        });
+                    match save_then_chown {
+                        Ok(()) => {
+                            let mut warnings: Vec<String> = Vec::new();
+                            if args.preserve_mtime {
+                                if let Err(e) = copy_mtime(&src_path, &path) {
+                                    warn!(
+                                        "Saved {} but failed to copy mtime from {}: {}",
+                                        path.display(),
+                                        src_path.display(),
+                                        e
+                                    );
+                                    warnings.push(format!("mtime_copy_failed: {}", e));
                                 }
-                                info!("Saved {}", path.display());
-                                emit_if_json(&RegionEvent {
-                                    ty: "region",
-                                    x: x.0 as i64,
-                                    z: z.0 as i64,
-                                    status: "rendered",
-                                    output: Some(path.display().to_string()),
-                                    error: None,
-                                    warnings,
-                                });
-                                1
                             }
-                            Err(e) => {
-                                error!("Failed to save {}: {}", path.display(), e);
-                                emit_if_json(&RegionEvent {
-                                    ty: "region",
-                                    x: x.0 as i64,
-                                    z: z.0 as i64,
-                                    status: "error",
-                                    output: None,
-                                    error: Some(e),
-                                    warnings: Vec::new(),
-                                });
-                                0
-                            }
+                            info!("Saved {}", path.display());
+                            emit_if_json(&RegionEvent {
+                                ty: "region",
+                                x: x.0 as i64,
+                                z: z.0 as i64,
+                                status: "rendered",
+                                output: Some(path.display().to_string()),
+                                error: None,
+                                warnings,
+                            });
+                            1
+                        }
+                        Err(e) => {
+                            error!("Failed to save {}: {}", path.display(), e);
+                            emit_if_json(&RegionEvent {
+                                ty: "region",
+                                x: x.0 as i64,
+                                z: z.0 as i64,
+                                status: "error",
+                                output: None,
+                                error: Some(e),
+                                warnings: Vec::new(),
+                            });
+                            0
                         }
                     }
-                    Ok(None) => {
-                        warn!("Missing r.{}.{}.mca", x.0, z.0);
-                        emit_if_json(&RegionEvent {
-                            ty: "region",
-                            x: x.0 as i64,
-                            z: z.0 as i64,
-                            status: "missing",
-                            output: None,
-                            error: None,
-                            warnings: Vec::new(),
-                        });
-                        0
-                    }
-                    Err(e) => {
-                        error!("Error processing r.{}.{}.mca: {}", x.0, z.0, e);
-                        emit_if_json(&RegionEvent {
-                            ty: "region",
-                            x: x.0 as i64,
-                            z: z.0 as i64,
-                            status: "error",
-                            output: None,
-                            error: Some(e.to_string()),
-                            warnings: Vec::new(),
-                        });
-                        0
-                    }
                 }
-            })
-            .sum();
+                Ok(None) => {
+                    warn!("Missing r.{}.{}.mca", x.0, z.0);
+                    emit_if_json(&RegionEvent {
+                        ty: "region",
+                        x: x.0 as i64,
+                        z: z.0 as i64,
+                        status: "missing",
+                        output: None,
+                        error: None,
+                        warnings: Vec::new(),
+                    });
+                    0
+                }
+                Err(e) => {
+                    error!("Error processing r.{}.{}.mca: {}", x.0, z.0, e);
+                    emit_if_json(&RegionEvent {
+                        ty: "region",
+                        x: x.0 as i64,
+                        z: z.0 as i64,
+                        status: "error",
+                        output: None,
+                        error: Some(e.to_string()),
+                        warnings: Vec::new(),
+                    });
+                    0
+                }
+            }
+        };
+        let saved: usize = if serial {
+            entries.into_iter().map(render_entry).sum()
+        } else {
+            entries.into_par_iter().map(render_entry).sum()
+        };
         info!("⏱ Region rendering took: {:?}", render_start.elapsed());
         if saved == 0 {
             return Err("No regions could be rendered".into());
@@ -425,58 +451,60 @@ pub fn execute(args: RenderArgs) -> Result<()> {
 
     info!("Rendering regions...");
     let render_start = std::time::Instant::now();
-    let region_maps: Vec<_> = entries
-        .into_par_iter()
-        .filter_map(|(parent, x, z)| {
-            let loader = RegionFileLoader::new(parent);
+    let render_entry = |(parent, x, z): (PathBuf, RCoord, RCoord)| {
+        let loader = RegionFileLoader::new(parent);
 
-            if x < x_range.end && x >= x_range.start && z < z_range.end && z >= z_range.start {
-                match render_one(x, z, &loader, &pal, height_mode) {
-                    Ok(Some(map)) => {
-                        info!("Processed r.{}.{}.mca", x.0, z.0);
-                        emit_if_json(&RegionEvent {
-                            ty: "region",
-                            x: x.0 as i64,
-                            z: z.0 as i64,
-                            status: "rendered",
-                            output: None,
-                            error: None,
-                            warnings: Vec::new(),
-                        });
-                        Some(map)
-                    }
-                    Ok(None) => {
-                        warn!("Missing r.{}.{}.mca", x.0, z.0);
-                        emit_if_json(&RegionEvent {
-                            ty: "region",
-                            x: x.0 as i64,
-                            z: z.0 as i64,
-                            status: "missing",
-                            output: None,
-                            error: None,
-                            warnings: Vec::new(),
-                        });
-                        None
-                    }
-                    Err(e) => {
-                        error!("Error processing r.{}.{}.mca: {}", x.0, z.0, e);
-                        emit_if_json(&RegionEvent {
-                            ty: "region",
-                            x: x.0 as i64,
-                            z: z.0 as i64,
-                            status: "error",
-                            output: None,
-                            error: Some(e.to_string()),
-                            warnings: Vec::new(),
-                        });
-                        None
-                    }
+        if x < x_range.end && x >= x_range.start && z < z_range.end && z >= z_range.start {
+            match render_one(x, z, &loader, &pal, height_mode) {
+                Ok(Some(map)) => {
+                    info!("Processed r.{}.{}.mca", x.0, z.0);
+                    emit_if_json(&RegionEvent {
+                        ty: "region",
+                        x: x.0 as i64,
+                        z: z.0 as i64,
+                        status: "rendered",
+                        output: None,
+                        error: None,
+                        warnings: Vec::new(),
+                    });
+                    Some(map)
                 }
-            } else {
-                None
+                Ok(None) => {
+                    warn!("Missing r.{}.{}.mca", x.0, z.0);
+                    emit_if_json(&RegionEvent {
+                        ty: "region",
+                        x: x.0 as i64,
+                        z: z.0 as i64,
+                        status: "missing",
+                        output: None,
+                        error: None,
+                        warnings: Vec::new(),
+                    });
+                    None
+                }
+                Err(e) => {
+                    error!("Error processing r.{}.{}.mca: {}", x.0, z.0, e);
+                    emit_if_json(&RegionEvent {
+                        ty: "region",
+                        x: x.0 as i64,
+                        z: z.0 as i64,
+                        status: "error",
+                        output: None,
+                        error: Some(e.to_string()),
+                        warnings: Vec::new(),
+                    });
+                    None
+                }
             }
-        })
-        .collect();
+        } else {
+            None
+        }
+    };
+    let region_maps: Vec<_> = if serial {
+        entries.into_iter().filter_map(render_entry).collect()
+    } else {
+        entries.into_par_iter().filter_map(render_entry).collect()
+    };
     info!("⏱ Region rendering took: {:?}", render_start.elapsed());
 
     info!("{} regions processed successfully", region_maps.len());
@@ -522,7 +550,7 @@ pub fn execute(args: RenderArgs) -> Result<()> {
     info!("⏱ Image assembly took: {:?}", assemble_start.elapsed());
 
     info!("Saving image to: {}", args.output.display());
-    img.save(&args.output)?;
+    save_image(&img, &args.output)?;
     chown::apply(&args.output)
         .map_err(|e| format!("Failed to chown {}: {}", args.output.display(), e))?;
     info!("Done! Map saved successfully.");

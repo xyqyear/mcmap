@@ -92,3 +92,30 @@ fn malformed_states_fail_instead_of_becoming_air() {
         assert!(palette(value).is_err());
     }
 }
+
+#[test]
+fn static_defaults_match_explicit_legacy_states() {
+    for state in super::super::default_states_26_3::DEFAULTS {
+        let properties = Value::Compound(
+            state
+                .properties
+                .iter()
+                .map(|(key, value)| (key.to_string(), Value::String(value.to_string())))
+                .collect(),
+        );
+        let compact = palette(nbt!([state.name])).unwrap().remove(0);
+        let explicit = palette(nbt!([{"Name": state.name, "Properties": properties}]))
+            .unwrap()
+            .remove(0);
+        assert_eq!(compact.name(), explicit.name());
+        assert_eq!(
+            compact.encoded_description(),
+            explicit.encoded_description(),
+            "{}",
+            state.name
+        );
+        assert_eq!(compact.archetype, explicit.archetype, "{}", state.name);
+    }
+    let unknown = palette(nbt!(["example:unknown"])).unwrap().remove(0);
+    assert_eq!(unknown.encoded_description(), "example:unknown|");
+}

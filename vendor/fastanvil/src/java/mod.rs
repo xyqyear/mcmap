@@ -10,6 +10,7 @@ mod block;
 mod chunk;
 mod default_states_26_3;
 mod heightmaps;
+mod layout_probe;
 mod section;
 mod section_data;
 mod section_tower;
@@ -26,13 +27,13 @@ use once_cell::sync::Lazy;
 use crate::{biome::Biome, Chunk, HeightMode};
 
 pub static AIR: Lazy<Block> = Lazy::new(|| Block {
-    name: "minecraft:air".to_owned(),
-    encoded: "minecraft:air|".to_owned(),
+    name: "minecraft:air".into(),
+    encoded: "minecraft:air|".into(),
     archetype: BlockArchetype::Airy,
 });
 pub static SNOW_BLOCK: Lazy<Block> = Lazy::new(|| Block {
-    name: "minecraft:snow_block".to_owned(),
-    encoded: "minecraft:snow_block|".to_owned(),
+    name: "minecraft:snow_block".into(),
+    encoded: "minecraft:snow_block|".into(),
     archetype: BlockArchetype::Snowy,
 });
 
@@ -46,6 +47,9 @@ pub enum JavaChunk {
 
 impl JavaChunk {
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
+        if let Some(chunk) = layout_probe::pre18_candidate(data) {
+            return Ok(Self::Pre18(chunk));
+        }
         let chunk: Result<CurrentJavaChunk> = from_bytes(data);
 
         match chunk {
@@ -80,6 +84,14 @@ impl Chunk for JavaChunk {
         }
     }
 
+    fn surface_heights(&self, mode: HeightMode) -> [isize; 256] {
+        match self {
+            JavaChunk::Post18(c) => c.surface_heights(mode),
+            JavaChunk::Pre18(c) => c.surface_heights(mode),
+            JavaChunk::Pre13(c) => c.surface_heights(mode),
+        }
+    }
+
     fn biome(&self, x: usize, y: isize, z: usize) -> Option<Biome> {
         match self {
             JavaChunk::Post18(c) => c.biome(x, y, z),
@@ -93,6 +105,14 @@ impl Chunk for JavaChunk {
             JavaChunk::Post18(c) => c.block(x, y, z),
             JavaChunk::Pre18(c) => c.block(x, y, z),
             JavaChunk::Pre13(c) => c.block(x, y, z),
+        }
+    }
+
+    fn water_depth(&self, x: usize, y: isize, z: usize, y_min: isize) -> isize {
+        match self {
+            JavaChunk::Post18(c) => c.water_depth(x, y, z, y_min),
+            JavaChunk::Pre18(c) => c.water_depth(x, y, z, y_min),
+            JavaChunk::Pre13(c) => c.water_depth(x, y, z, y_min),
         }
     }
 
