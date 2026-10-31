@@ -37,7 +37,13 @@ behavior, legacy nonzero-ID shading heights and the heightmap corrections in
   North-region seed chunks and unfinished chunks defer height evaluation until
   a visible neighbor needs it.
 - Exact color tables preserve the original floating-point result, including
-  its rounding. PNG uses lossless RLE compression with the Sub filter.
+  its rounding.
+- PNG images with a nonempty, exact RGBA8 buffer of at most 16 MiB use
+  libdeflate level 1 with no scanline filter. The existing PNG library writes
+  the container, checksums and image header. Larger or unusual buffers retain
+  the original Fast/Sub encoder and its memory behavior; native allocation or
+  capacity failures also fall back to that encoder. Other output formats keep
+  their existing encoders.
 - `mimalloc` supplies Rust allocations without worker threads or global C
   allocation overrides. This trades additional process memory for speed.
 - One-region and explicit `-j 1` requests avoid starting a Rayon worker pool.

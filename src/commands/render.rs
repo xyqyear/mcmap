@@ -10,10 +10,9 @@ use log::{error, info, warn};
 use rayon::prelude::*;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
+use self::png_output::save_image;
 use super::util::{Rectangle, auto_size, parse_region_filename};
 use crate::anvil::legacy::LegacyTopShadeRenderer;
 use crate::anvil::{
@@ -27,25 +26,10 @@ const REGION_PX: u32 = 32 * 16; // 512 px per region side
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+mod png_output;
+
 #[cfg(test)]
 mod tests;
-
-fn save_image(image: &image::RgbaImage, path: &Path) -> image::ImageResult<()> {
-    if !matches!(
-        image::ImageFormat::from_path(path),
-        Ok(image::ImageFormat::Png)
-    ) {
-        return image.save(path);
-    }
-    use image::codecs::png::{CompressionType, FilterType, PngEncoder};
-    let writer = BufWriter::new(File::create(path)?);
-    PngEncoder::new_with_quality(writer, CompressionType::Rle, FilterType::Sub).encode(
-        image.as_raw(),
-        image.width(),
-        image.height(),
-        image::ColorType::Rgba8,
-    )
-}
 
 #[derive(Args, Debug)]
 pub struct RenderArgs {

@@ -1,8 +1,8 @@
 # Strict libdeflate source ownership
 
 This directory contains `libdeflate-sys` **1.26.1**, including its bundled native
-libdeflate **1.26**. mcmap's maintained fastanvil dependency selects this path.
-The root Cargo lockfile controls the application build.
+libdeflate **1.26**. mcmap's maintained fastanvil dependency and bounded PNG
+encoder select this path. The root Cargo lockfile controls the application build.
 
 - Rust bindings repository: https://github.com/libdeflater/libdeflater
 - Rust bindings commit: `260e1e9a333e32e769855c1ad1f203289e0a3c8d`
