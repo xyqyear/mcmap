@@ -10,7 +10,7 @@ import threading
 import time
 import uuid
 import zlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import md5
 
 log = logging.getLogger(__name__)
@@ -145,11 +145,13 @@ class ProtocolSpec:
     play_keepalive_serverbound: int | None = None
     play_position_clientbound: int | None = None
     play_teleport_confirm_serverbound: int | None = None
+    teleport_confirm_position: bool = False
     play_move_pos_rot_serverbound: int | None = None
     play_move_status_serverbound: int | None = None
     play_chunk_batch_finished_clientbound: int | None = None
     play_chunk_batch_received_serverbound: int | None = None
     play_player_loaded_serverbound: int | None = None
+    play_tick_end_serverbound: int | None = None
 
 
 LEGACY_1_7 = ProtocolSpec(
@@ -339,6 +341,17 @@ MODERN_26_1_2 = ProtocolSpec(
 )
 
 
+MODERN_26_3 = replace(
+    MODERN_26_1_2,
+    config_select_known_packs_clientbound=0x0F,
+    play_login=0x32,
+    play_keepalive_clientbound=0x2D,
+    play_position_clientbound=0x49,
+    teleport_confirm_position=True,
+    play_tick_end_serverbound=0x0D,
+)
+
+
 PROTOCOL_SPECS = {
     5: LEGACY_1_7,
     340: LEGACY_1_12,
@@ -353,16 +366,14 @@ PROTOCOL_SPECS = {
     767: MODERN_1_20_6,
     772: MODERN_1_21_8,
     775: MODERN_26_1_2,
+    776: MODERN_26_1_2,
+    777: MODERN_26_3,
 }
 
 
 def protocol_spec(protocol: int, name: str) -> ProtocolSpec:
     if protocol in PROTOCOL_SPECS:
         return PROTOCOL_SPECS[protocol]
-    if protocol >= 775 or name.startswith("26."):
-        return MODERN_26_1_2
-    if protocol >= 772 or name.startswith("1.21.8"):
-        return MODERN_1_21_8
     raise RuntimeError(f"unsupported Minecraft protocol {protocol} ({name})")
 
 
@@ -436,6 +447,8 @@ class MinecraftClient:
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
+        if exc_type is None and self.error is not None:
+            raise RuntimeError("Minecraft client disconnected during test") from self.error
 
     def start(self) -> None:
         self.sock = socket.create_connection(
@@ -630,10 +643,10 @@ class MinecraftClient:
             payload.u8()
             teleport_id = payload.varint()
             self._set_position(x, y, z, yaw, pitch)
-        self.send_packet(
-            spec.play_teleport_confirm_serverbound or 0,
-            encode_varint(teleport_id),
-        )
+        confirmation = encode_varint(teleport_id)
+        if spec.teleport_confirm_position:
+            confirmation += struct.pack(">dddff", x, y, z, yaw, pitch)
+        self.send_packet(spec.play_teleport_confirm_serverbound or 0, confirmation)
 
     def _send_player_loaded(self) -> None:
         if self.spec.play_player_loaded_serverbound is None:
@@ -654,6 +667,8 @@ class MinecraftClient:
                 continue
             try:
                 self._send_movement()
+                if self.spec.play_tick_end_serverbound is not None:
+                    self.send_packet(self.spec.play_tick_end_serverbound)
             except OSError as e:
                 if not self.closed.is_set():
                     self.error = e

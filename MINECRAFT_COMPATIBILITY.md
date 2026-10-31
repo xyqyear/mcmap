@@ -79,6 +79,18 @@ old/new chunk formats, default and explicit properties, packed palette indices,
 block analysis, input preservation, malformed data and legitimate empty regions.
 The Integration tests workflow runs these checks before its real-server matrix,
 including pinned 26.2 and the latest vanilla release.
+Isolated test servers explicitly disable their whitelist so synthetic clients
+can join even though [26.3 Snapshot 2](https://www.minecraft.net/en-us/article/minecraft-26-3-snapshot-2)
+changed the game's default to enabled. Player-presence and pruning assertions
+still require a real client connection and saved inhabited-time data.
+The synthetic client uses protocol 777's packet IDs from the official 26.3
+`reports/packets.json`; known-pack selection and the clientbound play login,
+keep-alive and position packets differ from 26.2. Unknown protocol versions fail
+explicitly instead of guessing that a newer release shares an older layout.
+The 26.3 teleport confirmation carries position and rotation as well as its ID,
+as specified by the official server's `ServerboundAcceptTeleportationPacket`
+codec. The client also sends tick-end packets and fails the test on an unexpected
+disconnect, so a vanished player cannot masquerade as low inhabited time.
 
 Local production-data verification uses copied MCA files and a copied color
 palette. Those private world files are not repository fixtures. Compare source

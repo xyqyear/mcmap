@@ -238,6 +238,7 @@ class ServerInstance:
         self.port = _free_port()
         props = {
             "online-mode": "false",
+            "white-list": "false",
             "server-port": str(self.port),
             "allow-flight": "true",
             "network-compression-threshold": "-1",
