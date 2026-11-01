@@ -7,7 +7,7 @@
 //! information from a chunk however, eg entities are lost. It is not suitable
 //! for serializing back into a region.
 //!
-//! You can create your own chunk structures to (de)serialize using [`fastnbt`].
+//! You can create your own chunk structures to (de)serialize using [`mcmap_nbt`].
 //!
 //! [`Region`] can be given a `Read`, `Write` and `Seek` type eg a file in
 //! order to read and write chunk data.
@@ -18,8 +18,8 @@
 //!   This feature is enabled by default and encapsulates all world-rendering related functionality.
 
 pub mod biome;
-pub mod tex;
 pub mod complete;
+pub mod tex;
 
 mod bits;
 mod dimension;

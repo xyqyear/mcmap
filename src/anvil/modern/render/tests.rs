@@ -85,12 +85,12 @@ fn separate_palettes_do_not_share_resolved_colors() {
 }
 
 fn boundary_chunk(status: &str, section_y: Option<i8>) -> super::ChunkData {
-    use fastnbt::{LongArray, nbt};
+    use mcmap_nbt::{LongArray, nbt};
     let mut value = nbt!({
         "DataVersion": 5023,
         "Status": status,
     });
-    let fastnbt::Value::Compound(root) = &mut value else {
+    let mcmap_nbt::Value::Compound(root) = &mut value else {
         unreachable!()
     };
     if let Some(y) = section_y {
@@ -112,7 +112,7 @@ fn boundary_chunk(status: &str, section_y: Option<i8>) -> super::ChunkData {
             nbt!({"MOTION_BLOCKING": LongArray::new(vec![0;37])}),
         );
     }
-    super::ChunkData::from_bytes(&fastnbt::to_bytes(&value).unwrap()).unwrap()
+    super::ChunkData::from_bytes(&mcmap_nbt::to_bytes(&value).unwrap()).unwrap()
 }
 
 #[test]

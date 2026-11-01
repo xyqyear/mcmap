@@ -89,6 +89,7 @@ pub enum NorthBoundary {
 impl<'a> RenderEngine for TopShadeRenderer<'a> {
     type Chunk = ChunkData;
     type Boundary = NorthBoundary;
+    type Decoder = fastanvil::ChunkDecoder;
 
     fn boundary(&self, chunk: ChunkData) -> NorthBoundary {
         NorthBoundary::Deferred(Box::new(chunk))
@@ -115,7 +116,15 @@ impl<'a> RenderEngine for TopShadeRenderer<'a> {
         (pixels, boundary)
     }
 
-    fn decode(&self, bytes: &[u8]) -> Result<Option<Self::Chunk>, String> {
-        ChunkData::from_bytes(bytes).map(Some)
+    fn decode(
+        &self,
+        decoder: &mut Self::Decoder,
+        bytes: &[u8],
+    ) -> Result<Option<Self::Chunk>, String> {
+        decoder
+            .decode(bytes)
+            .map(ChunkData::from_chunk)
+            .map(Some)
+            .map_err(|error| format!("Failed to parse chunk: {error}"))
     }
 }

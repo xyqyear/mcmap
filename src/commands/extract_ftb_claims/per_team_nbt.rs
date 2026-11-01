@@ -149,9 +149,9 @@ fn read_gzip_nbt<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T> {
         let mut dec = GzDecoder::new(bytes);
         let mut buf = Vec::with_capacity(bytes.len() * 4);
         dec.read_to_end(&mut buf)?;
-        Ok(fastnbt::from_bytes(&buf)?)
+        Ok(mcmap_nbt::from_bytes(&buf)?)
     } else {
-        Ok(fastnbt::from_bytes(bytes)?)
+        Ok(mcmap_nbt::from_bytes(bytes)?)
     }
 }
 

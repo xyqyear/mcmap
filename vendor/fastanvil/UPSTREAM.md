@@ -27,8 +27,9 @@ this directory's maintenance scope. An upstream release is not required before
 making a justified local fix.
 
 Keep CLI arguments, JSON events, application palette policy, file ownership,
-cache invalidation and world-management orchestration in mcmap. Changes to a
-different dependency, including fastnbt, require their own evidence and scope.
+cache invalidation and world-management orchestration in mcmap. Generic NBT
+reading, arrays and serialization belong to the workspace's
+[mcmap-nbt crate](../../crates/mcmap-nbt/README.md).
 
 ## Upstream refresh
 
@@ -57,11 +58,23 @@ building a whole-chunk NBT tree. Legacy property semantics and renderer
 classification are retained. `src/java/mod.rs` preserves errors from every
 attempted chunk layout when all decoders fail.
 
-`src/java/layout_probe.rs` recognizes roots whose first field is `Level`. A
-successful pre-1.18 decode can return directly only when the root `Status` field
-is absent, making the modern layout impossible. Ambiguous roots and failed
-candidates retain the original modern, pre-1.18 and pre-1.13 fallback order and
-error messages. The prefix check never replaces full NBT validation.
+`src/java/decode/` directly reads current and pre-1.18 chunk fields using
+mcmap-nbt. Root routing recognizes `Level`, `Status` and `sections`, skipping
+unrelated fields. A successful pre-1.18 decode returns directly only when the
+root `Status` field is absent. Failed candidates fall back to modern, pre-1.18
+and pre-1.13 Serde schemas in that order, using the same mcmap-nbt parser.
+Errors retain the context of every failed layout; parser error wording can
+differ from upstream. Both paths share block semantics and the constructors
+for section towers and packed data.
+
+`ChunkDecoder` owns a bounded cache of validated block palette entries. Exact
+raw keys are compared after hashing, with separate maps for string and compound
+tags. The cache holds at most 4,096 entries and 8 MiB of key bytes; individual
+keys above 64 KiB bypass it. Parsed block strings are additional memory. Returned
+chunks own their data and survive decoder destruction or input-buffer reuse.
+mcmap's region pipeline creates and drops the decoder within each render call,
+including failures and missing regions. There is no global or thread-local cache.
+`JavaChunk::from_bytes` remains available for independent chunk reads.
 
 Known modern default states borrow compiled names and encoded descriptions.
 The generated finite index uses `ahash`; arbitrary input states are never cached

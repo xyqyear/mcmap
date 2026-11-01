@@ -11,8 +11,8 @@
 // team — to roll up by team we look up each player's `TeamID` field. Players
 // without a team (`TeamID = ""`) get a synthesized solo team.
 
-use fastnbt::Value;
 use flate2::read::GzDecoder;
+use mcmap_nbt::Value;
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -184,9 +184,9 @@ fn read_gzip_nbt<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T> {
         let mut dec = GzDecoder::new(bytes);
         let mut buf = Vec::with_capacity(bytes.len() * 4);
         dec.read_to_end(&mut buf)?;
-        Ok(fastnbt::from_bytes(&buf)?)
+        Ok(mcmap_nbt::from_bytes(&buf)?)
     } else {
-        Ok(fastnbt::from_bytes(bytes)?)
+        Ok(mcmap_nbt::from_bytes(bytes)?)
     }
 }
 

@@ -92,6 +92,60 @@ checks; the real-world timing corpus contained zlib frames only.
 
 ## Real-world corpus
 
+### 0.9.0 NBT candidate
+
+The 2026-11-01 production integration removes fastnbt from the Cargo graph and
+uses [mcmap-nbt](crates/mcmap-nbt/README.md) with fastanvil's direct chunk readers
+and region-owned palette cache. It retains upstream libdeflate and the existing
+decompression-buffer policy. No extra render threads or processes were added.
+
+The local Linux GNU comparison used rustc 1.90.0, fat LTO, one codegen unit,
+mimalloc, an Intel i5-13600KF under WSL, and CPU affinity 0. There were 24 regions
+with 21,483 stored chunks, including legacy, Forge and 26.3 data. The parser
+comparison used pristine 0.8.9 schemas in the same executable and 32 interleaved
+samples per implementation per region, with preloaded uncompressed bytes. It
+included constructing and dropping owned chunks and empty-to-dropped decoder
+caches. Across the sum of per-region medians: **733.78 -> 354.56 ms**, a **51.7%**
+reduction (2.07x); 15/24 regions reached 2x, none reached 4x. These sums are not a
+single end-to-end run, and are not comparable as absolute times to the earlier
+i5-12600K experiment.
+
+Whole-CLI measurements separately used identical native-Linux input copies,
+original palettes, warm files, one process at a time, `-j 1`, and 16 interleaved
+samples per binary per region. A small C launcher measured monotonic wall time,
+child CPU usage and peak RSS independently of the Python driver. The sum of
+per-region wall-time medians was **2385.84 -> 1999.26 ms**, a **16.2%** reduction.
+Median CLI-reported elapsed times summed to 2324.0 -> 1933.0 ms; median user CPU
+times summed to 2170.15 -> 1803.35 ms. Neither parser speedup nor these aggregates
+guarantee every region fits within 50 ms.
+
+| Region | NBT parsing, ms | Whole CLI, ms | Peak RSS, KiB |
+| --- | ---: | ---: | ---: |
+| GTNH | 115.34 -> 66.17 | 230.20 -> 186.68 | 184726 -> 186284 |
+| MNM | 83.93 -> 33.26 | 194.28 -> 146.10 | 66236 -> 65800 |
+| 26.3 large | 16.45 -> 7.28 | 55.70 -> 46.26 | 23276 -> 26904 |
+| 26.3 small | 9.18 -> 5.48 | 28.03 -> 24.79 | 27314 -> 26884 |
+
+Seven candidate regions had whole-CLI medians below 50 ms, versus four for
+0.8.9. Cache memory depends on palette diversity: the large 26.3 sample used
+about 3.5 MiB more RSS. RSS values are whole-process medians, not parser-only
+allocations or worst-case limits.
+
+Full parsed states matched on all 21,483 real chunks. The independent reference
+also covered 814 community/generated/mutated NBT inputs, 5,284 chunk-model and
+ambiguity cases, 52 typed/encoding/depth checks and 31 ownership checks. Eighteen
+malformed model cases that panic in the baseline path return errors in the new
+path. Default-height renders for all 24 regions and calculated-height renders
+for 19 modern regions produced **43 byte-identical PNG pairs**. Every measured
+CLI render also matched its reference PNG, with source and palette hashes
+unchanged.
+
+Raw measurements, binary hashes, fixtures and harness sources are retained
+outside Git at `D:/mcmap-bench/nbt-0.9.0/`. Performance experiments do not run in
+CI; CI covers the pinned correctness fixtures and application regressions.
+
+### Corpus selection and comparison
+
 Keep private archives, extracted maps, palettes and rendered images outside Git.
 Select spatially separated regions across saves, dimensions and densities. A
 selected benchmark region must render successfully with the frozen baseline and

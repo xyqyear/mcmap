@@ -1,5 +1,5 @@
 use bit_field::BitField;
-use fastnbt::LongArray;
+use mcmap_nbt::LongArray;
 
 use serde::Deserialize;
 use std::fmt::Debug;
@@ -49,20 +49,26 @@ impl Packing {
 impl<'de, T: Debug + Deserialize<'de>> Deserialize<'de> for BlockData<T> {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let inner = DataInner::deserialize(deserializer)?;
-        let packing = Packing::new(inner.palette.len(), 4);
-        Ok(Self { inner, packing })
+        Ok(Self::from_parts(inner.data, inner.palette))
     }
 }
 
 impl<'de, T: Debug + Deserialize<'de>> Deserialize<'de> for BiomeData<T> {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let inner = DataInner::deserialize(deserializer)?;
-        let packing = Packing::new(inner.palette.len(), 1);
-        Ok(Self { inner, packing })
+        Ok(Self::from_parts(inner.data, inner.palette))
     }
 }
 
 impl<T: Debug> BlockData<T> {
+    pub(super) fn from_parts(data: Option<LongArray>, palette: Vec<T>) -> Self {
+        let packing = Packing::new(palette.len(), 4);
+        Self {
+            inner: DataInner { data, palette },
+            packing,
+        }
+    }
+
     /// Get the block data for the block at x,y,z, where x,y,z are relative to
     /// the section ie 0..16.
     pub fn at(&self, x: usize, sec_y: usize, z: usize) -> Option<&T> {
@@ -104,6 +110,14 @@ impl<T: Debug> BlockData<T> {
 }
 
 impl<T: Debug> BiomeData<T> {
+    pub(super) fn from_parts(data: Option<LongArray>, palette: Vec<T>) -> Self {
+        let packing = Packing::new(palette.len(), 1);
+        Self {
+            inner: DataInner { data, palette },
+            packing,
+        }
+    }
+
     pub fn at(&self, x: usize, sec_y: usize, z: usize) -> Option<&T> {
         // Caution: int division, so lops of remainder of 4, so you can't just
         // remove a *4 and /4 and get the same results.
@@ -249,13 +263,13 @@ mod packing_tests {
 
     #[test]
     fn empty_palettes_keep_word_sized_packed_indices() {
-        let nbt = fastnbt::nbt!({
+        let nbt = mcmap_nbt::nbt!({
             "palette": [],
-            "data": fastnbt::LongArray::new(vec![0, 1, 2, 3]),
+            "data": mcmap_nbt::LongArray::new(vec![0, 1, 2, 3]),
         });
-        let bytes = fastnbt::to_bytes(&nbt).unwrap();
-        let blocks: BlockData<String> = fastnbt::from_bytes(&bytes).unwrap();
-        let biomes: BiomeData<String> = fastnbt::from_bytes(&bytes).unwrap();
+        let bytes = mcmap_nbt::to_bytes(&nbt).unwrap();
+        let blocks: BlockData<String> = mcmap_nbt::from_bytes(&bytes).unwrap();
+        let biomes: BiomeData<String> = mcmap_nbt::from_bytes(&bytes).unwrap();
         assert_eq!(blocks.packing.bits, usize::BITS as usize);
         assert_eq!(biomes.packing.bits, usize::BITS as usize);
         assert_eq!(blocks.at(0, 0, 0), None);

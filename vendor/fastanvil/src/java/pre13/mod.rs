@@ -6,7 +6,7 @@ use std::sync::RwLock;
 use once_cell::sync::OnceCell;
 use serde::Deserialize;
 
-use fastnbt::ByteArray;
+use mcmap_nbt::ByteArray;
 
 use crate::{biome::Biome, Block, Chunk, HeightMode};
 use crate::{expand_heightmap, Heightmaps, SectionLike, SectionTower};

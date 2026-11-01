@@ -25,7 +25,7 @@ pub(crate) const CHUNK_HEADER_SIZE: usize = 5;
 
 /// A Minecraft Region, allowing reading and writing of chunk data to a stream (eg a
 /// File). This does not concern itself with manipulating chunk data, users are
-/// expected to use `fastnbt` or other deserialization method to manipulate the
+/// expected to use `mcmap_nbt` or other deserialization method to manipulate the
 /// chunk data itself.
 ///
 /// If using a stream with `Read` and `Seek` you can only read chunk data. If
@@ -131,7 +131,7 @@ where
     /// let chunk = region.read_chunk(1,2).unwrap().unwrap();
     ///
     /// // Parse chunk data into a CurrentJavaChunk.
-    /// let chunk: CurrentJavaChunk = fastnbt::from_bytes(&chunk).unwrap();
+    /// let chunk: CurrentJavaChunk = mcmap_nbt::from_bytes(&chunk).unwrap();
     /// # Ok(())
     /// # }
     ///  ```

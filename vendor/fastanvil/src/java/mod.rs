@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use fastnbt::{error::Result, from_bytes};
+use mcmap_nbt::{error::Result, from_bytes};
 /// 1.2 to 1.12
 pub mod pre13;
 /// 1.13 to 1.17
@@ -8,9 +8,12 @@ pub mod pre18;
 
 mod block;
 mod chunk;
+mod decode;
 mod default_states_26_3;
 mod heightmaps;
-mod layout_probe;
+#[cfg(test)]
+mod routing_tests;
+pub use decode::ChunkDecoder;
 mod section;
 mod section_data;
 mod section_tower;
@@ -47,9 +50,10 @@ pub enum JavaChunk {
 
 impl JavaChunk {
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
-        if let Some(chunk) = layout_probe::pre18_candidate(data) {
-            return Ok(Self::Pre18(chunk));
-        }
+        ChunkDecoder::default().decode(data)
+    }
+
+    fn from_bytes_generic(data: &[u8]) -> Result<Self> {
         let chunk: Result<CurrentJavaChunk> = from_bytes(data);
 
         match chunk {

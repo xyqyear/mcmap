@@ -45,18 +45,20 @@ impl<S> SectionTower<S> {
 }
 
 impl<'de, S: SectionLike + Deserialize<'de>> Deserialize<'de> for SectionTower<S> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where
-            D: serde::Deserializer<'de>,
-    {
-        let sections: Vec<S> = Deserialize::deserialize(deserializer)?;
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Vec::<S>::deserialize(deserializer).map(Self::from_sections)
+    }
+}
+
+impl<S: SectionLike> SectionTower<S> {
+    pub(super) fn from_sections(sections: Vec<S>) -> Self {
         if sections.is_empty() {
-            return Ok(Self {
+            return Self {
                 sections,
                 map: vec![],
                 y_min: 0,
                 y_max: 0,
-            });
+            };
         }
 
         // We need to figure out how deep the world goes. Since 1.17 the depth
@@ -98,12 +100,12 @@ impl<'de, S: SectionLike + Deserialize<'de>> Deserialize<'de> for SectionTower<S
             sparse_sections[sec_index] = Some(i);
         }
 
-        Ok(Self {
+        Self {
             sections,
             map: sparse_sections,
             y_min: 16 * min,
             y_max: 16 * (max + 1),
-        })
+        }
     }
 }
 

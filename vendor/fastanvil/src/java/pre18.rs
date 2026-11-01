@@ -2,7 +2,7 @@ use std::convert::TryFrom;
 use std::ops::Range;
 use std::sync::RwLock;
 
-use fastnbt::IntArray;
+use mcmap_nbt::IntArray;
 use once_cell::sync::OnceCell;
 use serde::Deserialize;
 

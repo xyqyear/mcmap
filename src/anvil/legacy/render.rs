@@ -92,6 +92,7 @@ pub enum NorthBoundary {
 impl<'a> RenderEngine for LegacyTopShadeRenderer<'a> {
     type Chunk = LegacyChunkData;
     type Boundary = NorthBoundary;
+    type Decoder = ();
     fn boundary(&self, chunk: LegacyChunkData) -> NorthBoundary {
         NorthBoundary::Deferred(Box::new(chunk))
     }
@@ -125,7 +126,11 @@ impl<'a> RenderEngine for LegacyTopShadeRenderer<'a> {
         (out, NorthBoundary::Heights(previous_row))
     }
 
-    fn decode(&self, bytes: &[u8]) -> Result<Option<Self::Chunk>, String> {
+    fn decode(
+        &self,
+        _decoder: &mut Self::Decoder,
+        bytes: &[u8],
+    ) -> Result<Option<Self::Chunk>, String> {
         let decoded = match self.format {
             PaletteFormat::Forge112 => chunk_forge112::from_bytes(bytes),
             // Modern shouldn't reach the legacy engine at all (the dispatcher

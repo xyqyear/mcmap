@@ -39,7 +39,8 @@ struct Engine;
 impl RenderEngine for Engine {
     type Chunk = u8;
     type Boundary = u8;
-    fn decode(&self, bytes: &[u8]) -> Result<Option<u8>, String> {
+    type Decoder = ();
+    fn decode(&self, _decoder: &mut Self::Decoder, bytes: &[u8]) -> Result<Option<u8>, String> {
         match bytes[0] {
             0 => Ok(None),
             255 => Err("invalid".into()),

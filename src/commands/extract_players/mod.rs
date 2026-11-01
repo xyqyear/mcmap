@@ -156,7 +156,7 @@ mod tests {
     }
 
     fn write_gzip_nbt<T: Serialize>(path: &Path, value: &T) {
-        let bytes = fastnbt::to_bytes(value).unwrap();
+        let bytes = mcmap_nbt::to_bytes(value).unwrap();
         let file = fs::File::create(path).unwrap();
         let mut enc = GzEncoder::new(file, Compression::fast());
         enc.write_all(&bytes).unwrap();

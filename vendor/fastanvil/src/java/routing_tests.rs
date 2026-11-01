@@ -1,39 +1,6 @@
-use serde::{de::IgnoredAny, Deserialize};
-
-use super::pre18;
-
-#[derive(Deserialize)]
-struct Pre18Candidate {
-    #[serde(rename = "DataVersion")]
-    data_version: i32,
-    #[serde(rename = "Level")]
-    level: pre18::Level,
-    #[serde(rename = "Status")]
-    modern_status: Option<IgnoredAny>,
-}
-
-pub(super) fn pre18_candidate(data: &[u8]) -> Option<pre18::JavaChunk> {
-    if data.first() != Some(&10) {
-        return None;
-    }
-    let name_length = u16::from_be_bytes(data.get(1..3)?.try_into().ok()?) as usize;
-    if !data.get(3 + name_length..)?.starts_with(b"\x0a\0\x05Level") {
-        return None;
-    }
-    let candidate: Pre18Candidate = fastnbt::from_bytes(data).ok()?;
-    // A missing root Status makes the modern layout impossible, even with a valid nested Level.
-    candidate
-        .modern_status
-        .is_none()
-        .then_some(pre18::JavaChunk {
-            data_version: candidate.data_version,
-            level: candidate.level,
-        })
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::pre18;
     use crate::{java::CurrentJavaChunk, JavaChunk};
 
     fn field(data: &mut Vec<u8>, tag: u8, name: &str, value: &[u8]) {
@@ -66,13 +33,13 @@ mod tests {
         root
     }
 
-    fn original(data: &[u8]) -> fastnbt::error::Result<JavaChunk> {
-        let modern: fastnbt::error::Result<CurrentJavaChunk> = fastnbt::from_bytes(data);
+    fn original(data: &[u8]) -> mcmap_nbt::error::Result<JavaChunk> {
+        let modern: mcmap_nbt::error::Result<CurrentJavaChunk> = mcmap_nbt::from_bytes(data);
         match modern {
             Ok(chunk) => Ok(JavaChunk::Post18(chunk)),
-            Err(modern_error) => match fastnbt::from_bytes::<pre18::JavaChunk>(data) {
+            Err(modern_error) => match mcmap_nbt::from_bytes::<pre18::JavaChunk>(data) {
                 Ok(chunk) => Ok(JavaChunk::Pre18(chunk)),
-                Err(pre18_error) => fastnbt::from_bytes::<crate::java::pre13::JavaChunk>(data)
+                Err(pre18_error) => mcmap_nbt::from_bytes::<crate::java::pre13::JavaChunk>(data)
                     .map(JavaChunk::Pre13)
                     .map_err(|pre13_error| serde::de::Error::custom(format!(
                         "Invalid chunk: modern: {modern_error}; pre-1.18: {pre18_error}; pre-1.13: {pre13_error}"
@@ -97,7 +64,7 @@ mod tests {
     fn pre18_candidate_requires_absent_root_status_and_keeps_modern_priority() {
         let mut old = root(true);
         old.push(0);
-        assert!(pre18_candidate(&old).is_some());
+
         assert!(matches!(
             JavaChunk::from_bytes(&old).unwrap(),
             JavaChunk::Pre18(_)
@@ -112,7 +79,7 @@ mod tests {
             };
             field(&mut ambiguous, status_tag, "Status", &value);
             ambiguous.push(0);
-            assert!(pre18_candidate(&ambiguous).is_none());
+
             if status_tag == 8 {
                 assert!(matches!(
                     JavaChunk::from_bytes(&ambiguous).unwrap(),

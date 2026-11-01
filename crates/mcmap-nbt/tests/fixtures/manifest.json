@@ -1,0 +1,187 @@
+{
+  "cases": [
+    {
+      "canonical_sha1": "9467579350bda0b728de7012e90c3ba9d55a32af",
+      "file": "00000-fastnbt-21w44a-test1.nbt",
+      "input_sha1": "d9feef5f8c5afad9ecabf62ea28ece486820ee02",
+      "input_sha256": "545dab01a949f304aceede96d1c7a31586f4fb7c39059c0d8aa3b7215172b5a4",
+      "source": {
+        "commit": "60c7ee0de70c7ce6bfffc553fe372f834c3b32e9",
+        "file_sha256": "545dab01a949f304aceede96d1c7a31586f4fb7c39059c0d8aa3b7215172b5a4",
+        "path": "fastanvil/resources/21w44a-test1.nbt",
+        "repository": "fastnbt",
+        "wrapper": "raw"
+      }
+    },
+    {
+      "canonical_sha1": "bd4027f410d4676a094d168c1158063b6676ffff",
+      "file": "00001-fastnbt-chunk.nbt",
+      "input_sha1": "7d5ad8d891b6f2f029f286f286be1c2b6c290fd9",
+      "input_sha256": "5f0973e0b36412a20561e3db03a44d0ebc02e4e47faee30f51d6b51e76c889d0",
+      "source": {
+        "commit": "60c7ee0de70c7ce6bfffc553fe372f834c3b32e9",
+        "file_sha256": "5f0973e0b36412a20561e3db03a44d0ebc02e4e47faee30f51d6b51e76c889d0",
+        "path": "fastanvil/resources/chunk.nbt",
+        "repository": "fastnbt",
+        "wrapper": "raw"
+      }
+    },
+    {
+      "canonical_sha1": "2fd3ff6324d154047afb68da8e525b7ac983d490",
+      "file": "00002-fastnbt-etho-end-r.-6.-1.c.7.25.nbt",
+      "input_sha1": "5556bbc7b0bafec19a890e6be732e396fa3c57a4",
+      "input_sha256": "32c6663b745a46cdd5b7b034659b61b725458b2b1dbec72ee59c7cb872fea6e8",
+      "source": {
+        "commit": "60c7ee0de70c7ce6bfffc553fe372f834c3b32e9",
+        "file_sha256": "32c6663b745a46cdd5b7b034659b61b725458b2b1dbec72ee59c7cb872fea6e8",
+        "path": "fastanvil/resources/etho-end-r.-6.-1.c.7.25.nbt",
+        "repository": "fastnbt",
+        "wrapper": "raw"
+      }
+    },
+    {
+      "canonical_sha1": "3f49a63d52adbed07c83fd522219119809f94a0c",
+      "file": "00003-fastnbt-forge-1.20.1.nbt",
+      "input_sha1": "40a02208b09bd47817534f5f133d7c71f018243d",
+      "input_sha256": "3e25b4b4d1fbc640eeed5ba2caff4fdcff15026c36b9622d695530c2eaf53b05",
+      "source": {
+        "commit": "60c7ee0de70c7ce6bfffc553fe372f834c3b32e9",
+        "file_sha256": "3e25b4b4d1fbc640eeed5ba2caff4fdcff15026c36b9622d695530c2eaf53b05",
+        "path": "fastanvil/resources/forge-1.20.1.nbt",
+        "repository": "fastnbt",
+        "wrapper": "raw"
+      }
+    },
+    {
+      "canonical_sha1": "644326ab6e5ba6983299d03473f0e31e8550e97b",
+      "file": "00004-fastnbt-issue99-chunk.nbt",
+      "input_sha1": "1ba1d6885171b91a045ef9577d492937de32f73c",
+      "input_sha256": "f43e0e6ff3396ae94e32f347ff884f9b0e488ae91f13646297e5ff7aee3fd7ce",
+      "source": {
+        "commit": "60c7ee0de70c7ce6bfffc553fe372f834c3b32e9",
+        "file_sha256": "f43e0e6ff3396ae94e32f347ff884f9b0e488ae91f13646297e5ff7aee3fd7ce",
+        "path": "fastanvil/resources/issue99-chunk.nbt",
+        "repository": "fastnbt",
+        "wrapper": "raw"
+      }
+    },
+    {
+      "canonical_sha1": "bd4027f410d4676a094d168c1158063b6676ffff",
+      "file": "00005-fastnbt-chunk.nbt",
+      "input_sha1": "7d5ad8d891b6f2f029f286f286be1c2b6c290fd9",
+      "input_sha256": "5f0973e0b36412a20561e3db03a44d0ebc02e4e47faee30f51d6b51e76c889d0",
+      "source": {
+        "commit": "60c7ee0de70c7ce6bfffc553fe372f834c3b32e9",
+        "file_sha256": "5f0973e0b36412a20561e3db03a44d0ebc02e4e47faee30f51d6b51e76c889d0",
+        "path": "fastnbt/src/test/resources/chunk.nbt",
+        "repository": "fastnbt",
+        "wrapper": "raw"
+      }
+    },
+    {
+      "canonical_sha1": "fa8aa9d40a2cf832a15b78b60d65321d977d5c21",
+      "file": "00006-fastnbt-chunk1.14.nbt",
+      "input_sha1": "5168bb4f0453b78ff864c52a9fb8923cfe51afc8",
+      "input_sha256": "9d4567957fec1d37b977bd4ee57e02cfee29f14073315dcc314a6863d065fa6b",
+      "source": {
+        "commit": "60c7ee0de70c7ce6bfffc553fe372f834c3b32e9",
+        "file_sha256": "9d4567957fec1d37b977bd4ee57e02cfee29f14073315dcc314a6863d065fa6b",
+        "path": "fastnbt/src/test/resources/chunk1.14.nbt",
+        "repository": "fastnbt",
+        "wrapper": "raw"
+      }
+    },
+    {
+      "canonical_sha1": "9d2883906358018290943731c838afee1a70a3f7",
+      "file": "00007-simdnbt-bigtest.nbt",
+      "input_sha1": "16af458c0962b7c427b9b3379c2d9a01478f1cf2",
+      "input_sha256": "5912d0b255bcf1215667a81c0b901c6f54a4623f88d513ee6c97078a53957b59",
+      "source": {
+        "commit": "4d426efe074701bebec94b611ae90a78d07a11c3",
+        "file_sha256": "43629bb139ff0ed46e8dd24f7abbcacf0bc9deededb055d8105b3056ca3fc8df",
+        "path": "simdnbt/tests/bigtest.nbt",
+        "repository": "simdnbt",
+        "wrapper": "gzip"
+      }
+    },
+    {
+      "canonical_sha1": "85fef58e82a3f42817455c012f47b4308c8b92eb",
+      "file": "00008-simdnbt-complex_player.nbt",
+      "input_sha1": "77f7cbe9e9dc9661f563a56b450e667308f9285f",
+      "input_sha256": "1a6986673aaa8c798b61e9e0cd5af2b44a7e36e0a97725f43f4d2f3006ae87ac",
+      "source": {
+        "commit": "4d426efe074701bebec94b611ae90a78d07a11c3",
+        "file_sha256": "f2a8694e44de6398d8c2e63b41c165d48c9f85d9fe377a874b4d26e08338a694",
+        "path": "simdnbt/tests/complex_player.dat",
+        "repository": "simdnbt",
+        "wrapper": "gzip"
+      }
+    },
+    {
+      "canonical_sha1": "6ef5c24120e1c848ec07285d8d56c92f817a3f9c",
+      "file": "00009-simdnbt-hello_world.nbt",
+      "input_sha1": "b8588b42c8f6b0b03d97c884e3798d1adb955b0f",
+      "input_sha256": "7f27e590592aaaefd0ca0882caae7cdf42421b157325623cc11b22ea1bfbb4c5",
+      "source": {
+        "commit": "4d426efe074701bebec94b611ae90a78d07a11c3",
+        "file_sha256": "7f27e590592aaaefd0ca0882caae7cdf42421b157325623cc11b22ea1bfbb4c5",
+        "path": "simdnbt/tests/hello_world.nbt",
+        "repository": "simdnbt",
+        "wrapper": "raw"
+      }
+    },
+    {
+      "canonical_sha1": "7a988bea5d2f9b4383e67b46ef35a3cc35cce75f",
+      "file": "00010-simdnbt-hypixel.nbt",
+      "input_sha1": "63ebf929702982af7459483161bd414e59a60504",
+      "input_sha256": "4921665c039768fd11703120d1a9ed33cc4789812a56839e6da65558cc2bf149",
+      "source": {
+        "commit": "4d426efe074701bebec94b611ae90a78d07a11c3",
+        "file_sha256": "4921665c039768fd11703120d1a9ed33cc4789812a56839e6da65558cc2bf149",
+        "path": "simdnbt/tests/hypixel.nbt",
+        "repository": "simdnbt",
+        "wrapper": "raw"
+      }
+    },
+    {
+      "canonical_sha1": "3a362f1755c2cf79e74dd70a04d4026c6564a5df",
+      "file": "00011-simdnbt-inttest1023.nbt",
+      "input_sha1": "197a6651e98ecc2aa148a673a558694d170943ed",
+      "input_sha256": "b2a91718c84a32dfec78f82e54da677c298b8af321fe677bc8a3c51d8b40e794",
+      "source": {
+        "commit": "4d426efe074701bebec94b611ae90a78d07a11c3",
+        "file_sha256": "b2a91718c84a32dfec78f82e54da677c298b8af321fe677bc8a3c51d8b40e794",
+        "path": "simdnbt/tests/inttest1023.nbt",
+        "repository": "simdnbt",
+        "wrapper": "raw"
+      }
+    },
+    {
+      "canonical_sha1": "b0f2486a00ce0f5a45a7223df34cc07d51c4357b",
+      "file": "00012-simdnbt-level.nbt",
+      "input_sha1": "3f030352e9c9bc9c55861fa24d1dad3cfae75716",
+      "input_sha256": "7d2f72b777a48e8a7799b3d6a7eb552c09bcdd417df692748eecb32d57f82b12",
+      "source": {
+        "commit": "4d426efe074701bebec94b611ae90a78d07a11c3",
+        "file_sha256": "2d6f0c3b60437329b18699a5d16b6a466b5fe13e7f754187db849a72885eb013",
+        "path": "simdnbt/tests/level.dat",
+        "repository": "simdnbt",
+        "wrapper": "gzip"
+      }
+    },
+    {
+      "canonical_sha1": "92e2a9e69535de16f71ee51d62f8cb2607c39a7e",
+      "file": "00013-simdnbt-simple_player.nbt",
+      "input_sha1": "f823fb0cbf7f7143fe4ef85476ea5952693c8ada",
+      "input_sha256": "63062ea3b9d3b9423eda781fe45003784586c0f4fc5a85b0458bc4231524f83d",
+      "source": {
+        "commit": "4d426efe074701bebec94b611ae90a78d07a11c3",
+        "file_sha256": "7632963ce6891c95e36f59284b15c1a8f50cefe2b0606c4f4fbcab59f985a8f9",
+        "path": "simdnbt/tests/simple_player.dat",
+        "repository": "simdnbt",
+        "wrapper": "gzip"
+      }
+    }
+  ],
+  "reference": "fastnbt 2.6.1; every tag, value and floating-point bit preserved; compound keys sorted"
+}

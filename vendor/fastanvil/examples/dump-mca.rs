@@ -1,8 +1,8 @@
 use std::fs::File;
 
 use fastanvil::Region;
-use fastnbt::error::Result;
-use fastnbt::Value;
+use mcmap_nbt::error::Result;
+use mcmap_nbt::Value;
 
 //
 // This loads an MCA file:
@@ -18,7 +18,7 @@ fn main() {
     let mut mca = Region::from_stream(file).unwrap();
 
     for chunk in mca.iter().flatten() {
-        let chunk: Result<Value> = fastnbt::from_bytes(&chunk.data);
+        let chunk: Result<Value> = mcmap_nbt::from_bytes(&chunk.data);
         println!("{:#?}", chunk);
     }
 }

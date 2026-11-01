@@ -1,4 +1,4 @@
-use fastnbt::{nbt, LongArray};
+use mcmap_nbt::{nbt, LongArray};
 use serde::Deserialize;
 
 use super::{bits_per_block, Pre18Blockstates};
@@ -9,8 +9,8 @@ fn states(words: &[i64]) -> Pre18Blockstates {
     struct Data {
         states: Pre18Blockstates,
     }
-    let bytes = fastnbt::to_bytes(&nbt!({"states":LongArray::new(words.to_vec())})).unwrap();
-    fastnbt::from_bytes::<Data>(&bytes).unwrap().states
+    let bytes = mcmap_nbt::to_bytes(&nbt!({"states":LongArray::new(words.to_vec())})).unwrap();
+    mcmap_nbt::from_bytes::<Data>(&bytes).unwrap().states
 }
 
 fn words(len: usize) -> Vec<i64> {
@@ -109,12 +109,12 @@ fn singleton_and_invalid_palette_indices_keep_chunk_block_behavior() {
     ] {
         let mut section = nbt!({"Y":0i8,"Palette":[{"Name":"minecraft:water"}]});
         if let Some(words) = data {
-            let fastnbt::Value::Compound(map) = &mut section else {
+            let mcmap_nbt::Value::Compound(map) = &mut section else {
                 unreachable!()
             };
             map.insert("BlockStates".into(), LongArray::new(words).into());
         }
-        let bytes=fastnbt::to_bytes(&nbt!({"DataVersion":2586,"Level":{"xPos":0,"zPos":0,"Status":"full","Sections":[section]}})).unwrap();
+        let bytes=mcmap_nbt::to_bytes(&nbt!({"DataVersion":2586,"Level":{"xPos":0,"zPos":0,"Status":"full","Sections":[section]}})).unwrap();
         let chunk = JavaChunk::from_bytes(&bytes).unwrap();
         assert_eq!(chunk.block(0, 0, 0).map(|block| block.name()), expected);
         assert_eq!(chunk.block(15, 15, 15).map(|block| block.name()), expected);

@@ -8,7 +8,7 @@ fn current_pixel_failure_does_not_evaluate_northern_heights() {
             panic!("current pixel cannot be rendered")
         }
     }
-    let bytes = fastnbt::to_bytes(&fastnbt::nbt!({
+    let bytes = mcmap_nbt::to_bytes(&mcmap_nbt::nbt!({
         "DataVersion": 5023,
         "Status": "minecraft:full",
         "sections": [{"Y": 0_i8, "block_states": {"palette": ["minecraft:stone"]}}],

@@ -66,7 +66,8 @@ impl Chunk for CurrentJavaChunk {
             let stop = y_min.max(base - 1);
             let states = &section.block_states;
             if let [block] = states.palette() {
-                if block.archetype == BlockArchetype::Watery && states.try_iter_indices().is_none() {
+                if block.archetype == BlockArchetype::Watery && states.try_iter_indices().is_none()
+                {
                     depth += y - stop;
                     y = stop;
                     continue;
@@ -101,7 +102,7 @@ impl Chunk for CurrentJavaChunk {
 /// This type is not designed for accessing all data of a chunk. It provides the
 /// data necessary to render maps for fastanvil. If you need more complete data
 /// you need to write your own chunk struct and implement the serde traits, or
-/// use [`fastnbt::Value`].
+/// use [`mcmap_nbt::Value`].
 #[derive(Deserialize, Debug)]
 pub struct CurrentJavaChunk {
     #[serde(rename = "DataVersion")]

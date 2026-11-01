@@ -844,12 +844,12 @@ fn decompress_payload(scheme: u8, payload: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn read_inhabited_time(chunk_nbt: &[u8]) -> Result<i64> {
-    if let Ok(current) = fastnbt::from_bytes::<CurrentProbe>(chunk_nbt) {
+    if let Ok(current) = mcmap_nbt::from_bytes::<CurrentProbe>(chunk_nbt) {
         if let Some(value) = current.inhabited_time {
             return Ok(value);
         }
     }
-    let wrapped: WrappedProbe = fastnbt::from_bytes(chunk_nbt)?;
+    let wrapped: WrappedProbe = mcmap_nbt::from_bytes(chunk_nbt)?;
     Ok(wrapped.level.inhabited_time.unwrap_or(0))
 }
 

@@ -18,7 +18,7 @@ pub struct Chunk {
 }
 
 impl Chunk {
-    pub fn from_bytes(data: &[u8]) -> fastnbt::error::Result<Self> {
+    pub fn from_bytes(data: &[u8]) -> mcmap_nbt::error::Result<Self> {
         match JavaChunk::from_bytes(data)? {
             JavaChunk::Post18(chunk) => Ok(chunk.into()),
             JavaChunk::Pre18(chunk) => Ok(chunk.into()),

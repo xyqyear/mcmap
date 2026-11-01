@@ -1,4 +1,4 @@
-use fastnbt::{nbt, LongArray};
+use mcmap_nbt::{LongArray, nbt};
 
 use super::{Chunk, ChunkData, HeightMode};
 
@@ -13,7 +13,7 @@ fn heights(values: [u16; 256]) -> LongArray {
 #[test]
 fn bulk_trusted_heights_keep_column_order() {
     let values = std::array::from_fn(|index| index as u16);
-    let bytes = fastnbt::to_bytes(&nbt!({
+    let bytes = mcmap_nbt::to_bytes(&nbt!({
         "DataVersion": 5023,
         "Status": "minecraft:full",
         "Heightmaps": {"MOTION_BLOCKING": heights(values)},
@@ -35,7 +35,7 @@ fn bulk_trusted_heights_keep_column_order() {
 
 #[test]
 fn bulk_heights_preserve_negative_terminator_correction() {
-    let bytes = fastnbt::to_bytes(&nbt!({
+    let bytes = mcmap_nbt::to_bytes(&nbt!({
         "DataVersion": 5023,
         "Status": "minecraft:full",
         "Heightmaps": {"MOTION_BLOCKING": heights([16; 256])},
@@ -64,7 +64,7 @@ fn bulk_heights_preserve_negative_terminator_correction() {
 
 #[test]
 fn nonstandard_heightmap_packing_still_forces_calculation() {
-    let bytes = fastnbt::to_bytes(&nbt!({
+    let bytes = mcmap_nbt::to_bytes(&nbt!({
         "DataVersion": 5023,
         "Status": "minecraft:full",
         "Heightmaps": {"MOTION_BLOCKING": LongArray::new(vec![0; 29])},
@@ -82,7 +82,7 @@ fn nonstandard_heightmap_packing_still_forces_calculation() {
 
 #[test]
 fn water_depth_preserves_explicit_lower_bound_with_corrected_height_range() {
-    let bytes = fastnbt::to_bytes(&nbt!({
+    let bytes = mcmap_nbt::to_bytes(&nbt!({
         "DataVersion": 5023,
         "Status": "minecraft:full",
         "Heightmaps": {"MOTION_BLOCKING": heights([16; 256])},

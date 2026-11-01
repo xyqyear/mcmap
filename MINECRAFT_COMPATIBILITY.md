@@ -116,6 +116,21 @@ palette. Those private world files are not repository fixtures. Compare source
 digests before/after, region outcomes, decoded pixels and runtime; a zero exit
 code or the existence of a PNG alone does not establish successful rendering.
 
+The workspace's [mcmap-nbt](crates/mcmap-nbt/README.md) owns binary NBT parsing
+for rendering, analysis, registry/palette generation, players, claims and
+inhabited-time probes. All chunk layouts use this parser, including layout
+fallbacks. The maintained fastanvil copy owns direct chunk readers and
+region-scoped palette reuse; shared model constructors preserve section ordering,
+packed-data initialization and block-state semantics. CLI arguments, palette
+formats, decompression and rendering arithmetic remain compatible.
+
+NBT regression coverage includes pinned community resources and independent
+wire-format tests, cached-versus-generic routing and recovery, legacy FML
+registries, player files, both NBT claim families, and inhabited-time probes.
+CI runs these correctness checks on GNU Linux, musl Linux and Windows; private
+corpus benchmarks remain local. Current candidate performance and full-image
+comparison evidence belongs in [performance](PERFORMANCE.md).
+
 `tools/benchmark_render.py` requires Linux and GNU time (`/usr/bin/time`, or
 `--time-binary`). It runs release binaries in randomized,
 interleaved order, with a warm-up for each case/thread count. Each measured

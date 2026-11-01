@@ -501,29 +501,17 @@ dependencies = [
  "bit_field",
  "byteorder",
  "criterion",
- "fastnbt",
  "flate2",
  "image",
  "libdeflate-sys",
  "log",
  "lz4-java-wrc",
+ "mcmap-nbt",
  "num_enum",
  "once_cell",
  "serde",
  "serde_json",
  "tar",
-]
-
-[[package]]
-name = "fastnbt"
-version = "2.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2c4573fc9ea51f5ad19c47a16b78427b127f1c00b62808c6ab392beeb5f72c9"
-dependencies = [
- "byteorder",
- "cesu8",
- "serde",
- "serde_bytes",
 ]
 
 [[package]]
@@ -1111,13 +1099,13 @@ dependencies = [
  "clap 4.5.50",
  "env_logger",
  "fastanvil",
- "fastnbt",
  "flate2",
  "image",
  "libc",
  "libdeflate-sys",
  "log",
  "lz4-java-wrc",
+ "mcmap-nbt",
  "mimalloc",
  "png",
  "rayon",
@@ -1128,6 +1116,16 @@ dependencies = [
  "sha1",
  "uzers",
  "zip",
+]
+
+[[package]]
+name = "mcmap-nbt"
+version = "0.1.0"
+dependencies = [
+ "cesu8",
+ "serde",
+ "serde_json",
+ "sha1",
 ]
 
 [[package]]
@@ -1661,16 +1659,6 @@ checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
 dependencies = [
  "serde_core",
  "serde_derive",
-]
-
-[[package]]
-name = "serde_bytes"
-version = "0.11.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5d440709e79d88e51ac01c4b72fc6cb7314017bb7da9eeff678aa94c10e3ea8"
-dependencies = [
- "serde",
- "serde_core",
 ]
 
 [[package]]

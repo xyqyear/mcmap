@@ -135,7 +135,7 @@ struct Text<'a>(Cow<'a, str>);
 
 impl<'de> Deserialize<'de> for Text<'de> {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        fastnbt::borrow::deserialize_cow_str(deserializer).map(Self)
+        mcmap_nbt::borrow::deserialize_cow_str(deserializer).map(Self)
     }
 }
 

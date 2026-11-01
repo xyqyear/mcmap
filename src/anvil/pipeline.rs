@@ -48,6 +48,7 @@ impl RegionMap {
 pub trait RenderEngine {
     type Chunk;
     type Boundary;
+    type Decoder: Default;
 
     /// Retain a decoded northern seed without evaluating its heights.
     fn boundary(&self, chunk: Self::Chunk) -> Self::Boundary;
@@ -62,7 +63,11 @@ pub trait RenderEngine {
     /// Parse a chunk's decompressed NBT bytes into the engine's chunk shape.
     /// Returning `Ok(None)` signals "treat as empty" (used when the engine
     /// wants to skip a malformed chunk without failing the whole region).
-    fn decode(&self, bytes: &[u8]) -> Result<Option<Self::Chunk>, String>;
+    fn decode(
+        &self,
+        decoder: &mut Self::Decoder,
+        bytes: &[u8],
+    ) -> Result<Option<Self::Chunk>, String>;
 }
 
 /// Drive one region through an engine. Returns `Ok(None)` when the region
@@ -73,6 +78,7 @@ pub fn render_region<E: RenderEngine>(
     loader: &dyn RegionLoader,
     engine: &E,
 ) -> Result<Option<RegionMap>, String> {
+    let mut decoder = E::Decoder::default();
     let mut map = RegionMap::new(x, z, [0u8; 4]);
 
     let mut region = match loader.region(x, z)? {
@@ -89,7 +95,7 @@ pub fn render_region<E: RenderEngine>(
         for (cx, entry) in cache.iter_mut().enumerate() {
             *entry = match r.read_chunk_into(cx, 31, &mut bytes) {
                 Ok(true) => engine
-                    .decode(&bytes)
+                    .decode(&mut decoder, &bytes)
                     .ok()
                     .flatten()
                     .map(|chunk| engine.boundary(chunk)),
@@ -109,7 +115,7 @@ pub fn render_region<E: RenderEngine>(
                 continue;
             }
 
-            let chunk = match engine.decode(&bytes) {
+            let chunk = match engine.decode(&mut decoder, &bytes) {
                 Ok(Some(c)) => c,
                 Ok(None) => continue,
                 Err(e) => {

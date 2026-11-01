@@ -5,17 +5,17 @@ use std::hash::Hash;
 #[cfg(feature = "render")]
 use std::{collections::hash_map::DefaultHasher, hash::Hasher};
 
-use fastnbt::{nbt, LongArray, Value};
+use mcmap_nbt::{nbt, LongArray, Value};
 
+mod complete_chunk;
+mod heightmaps;
 mod region;
 mod region_decompression;
 mod rogue_chunks;
 mod section_data;
-mod complete_chunk;
 #[cfg(feature = "render")]
 mod standard_chunks;
 mod unicode_chunk;
-mod heightmaps;
 mod water_depth;
 
 #[test]

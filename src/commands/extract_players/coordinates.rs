@@ -1,5 +1,5 @@
-use fastnbt::Value;
 use flate2::read::GzDecoder;
+use mcmap_nbt::Value;
 use std::io::Read;
 use std::path::Path;
 
@@ -73,10 +73,10 @@ fn read_nbt(bytes: &[u8]) -> Result<Value, ExtractError> {
         let mut buf = Vec::with_capacity(bytes.len() * 4);
         dec.read_to_end(&mut buf)
             .map_err(|e| ExtractError::new(SkipReason::ParseError, e.to_string()))?;
-        fastnbt::from_bytes(&buf)
+        mcmap_nbt::from_bytes(&buf)
             .map_err(|e| ExtractError::new(SkipReason::ParseError, e.to_string()))
     } else {
-        fastnbt::from_bytes(bytes)
+        mcmap_nbt::from_bytes(bytes)
             .map_err(|e| ExtractError::new(SkipReason::ParseError, e.to_string()))
     }
 }
@@ -122,7 +122,7 @@ fn numeric(value: &Value) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fastnbt::Value;
+    use mcmap_nbt::Value;
 
     #[test]
     fn extracts_modern_dimension_string() {

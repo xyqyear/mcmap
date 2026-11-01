@@ -3,7 +3,7 @@ use crate::{min_bits_for_n_states, StatesIter};
 #[test]
 fn packed_lookup_keeps_palette_boundaries_and_padding() {
     use crate::BlockData;
-    use fastnbt::{nbt, LongArray, Value};
+    use mcmap_nbt::{nbt, LongArray, Value};
     for count in [1usize, 2, 16, 17, 32, 33, 65, 129, 257, 513, 1025, 2049] {
         let bits = min_bits_for_n_states(count).max(4);
         let per_long = 64 / bits;
@@ -13,9 +13,10 @@ fn packed_lookup_keeps_palette_boundaries_and_padding() {
                 (((index % count) as u64) << ((index % per_long) * bits)) as i64;
         }
         let palette = Value::List((0..count).map(|index| Value::Int(index as i32)).collect());
-        let bytes = fastnbt::to_bytes(&nbt!({ "palette": palette, "data": LongArray::new(words) }))
-            .unwrap();
-        let data: BlockData<usize> = fastnbt::from_bytes(&bytes).unwrap();
+        let bytes =
+            mcmap_nbt::to_bytes(&nbt!({ "palette": palette, "data": LongArray::new(words) }))
+                .unwrap();
+        let data: BlockData<usize> = mcmap_nbt::from_bytes(&bytes).unwrap();
         for index in 0..4096 {
             assert_eq!(
                 data.at(index & 15, index >> 8, (index >> 4) & 15),
@@ -28,11 +29,11 @@ fn packed_lookup_keeps_palette_boundaries_and_padding() {
 #[test]
 fn packed_singletons_and_missing_data_keep_air_fallbacks() {
     use crate::{BiomeData, BlockData};
-    use fastnbt::nbt;
+    use mcmap_nbt::nbt;
     let single: BlockData<usize> =
-        fastnbt::from_bytes(&fastnbt::to_bytes(&nbt!({"palette": [7]})).unwrap()).unwrap();
+        mcmap_nbt::from_bytes(&mcmap_nbt::to_bytes(&nbt!({"palette": [7]})).unwrap()).unwrap();
     let missing: BlockData<usize> =
-        fastnbt::from_bytes(&fastnbt::to_bytes(&nbt!({"palette": [7, 9]})).unwrap()).unwrap();
+        mcmap_nbt::from_bytes(&mcmap_nbt::to_bytes(&nbt!({"palette": [7, 9]})).unwrap()).unwrap();
     assert_eq!(single.at(15, 15, 15), Some(&7));
     assert_eq!(missing.at(15, 15, 15), None);
     assert_eq!(BlockData::<usize>::default().at(0, 0, 0), None);

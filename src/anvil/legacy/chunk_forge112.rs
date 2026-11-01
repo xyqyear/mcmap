@@ -17,7 +17,7 @@
 // either case so the existing legacy renderer takes both without changes.
 // See `docs/forge_1_12_2_rei.md` for the full REI format reference.
 
-use fastnbt::{IntArray, Value};
+use mcmap_nbt::{IntArray, Value};
 use serde::Deserialize;
 
 use super::chunk::{
@@ -60,16 +60,16 @@ struct SectionNbt {
     /// REI: 4096 bytes carrying the high 8 bits of the palette index.
     /// Vanilla pre-REI: low 8 bits of the block ID.
     #[serde(rename = "Blocks", default)]
-    blocks: Option<fastnbt::ByteArray>,
+    blocks: Option<mcmap_nbt::ByteArray>,
     /// Vanilla pre-REI only: 2048 nibble bytes carrying the high 4 bits of
     /// the block ID. REI never emits `Add` — the high bits live in `Blocks`
     /// as part of the palette index.
     #[serde(rename = "Add", default)]
-    add: Option<fastnbt::ByteArray>,
+    add: Option<mcmap_nbt::ByteArray>,
     /// REI: 2048 nibble bytes carrying the low 4 bits of the palette index.
     /// Vanilla pre-REI: 4-bit metadata.
     #[serde(rename = "Data", default)]
-    data: Option<fastnbt::ByteArray>,
+    data: Option<mcmap_nbt::ByteArray>,
     /// REI-only: maps palette index → `(block_id << 4) | meta`. Absence of
     /// this field is the signal we're looking at a vanilla pre-REI section.
     #[serde(rename = "Palette", default)]
@@ -80,7 +80,7 @@ struct SectionNbt {
 /// existing renderer takes the result without changes.
 pub fn from_bytes(data: &[u8]) -> Result<LegacyChunkData, String> {
     let root: ChunkRoot =
-        fastnbt::from_bytes(data).map_err(|e| format!("Forge chunk NBT parse: {}", e))?;
+        mcmap_nbt::from_bytes(data).map_err(|e| format!("Forge chunk NBT parse: {}", e))?;
     let level = root.level;
 
     let mut sections: [Option<LegacySection>; 16] = Default::default();
@@ -222,7 +222,7 @@ fn nibble(arr: &[i8], i: usize) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fastnbt::ByteArray;
+    use mcmap_nbt::ByteArray;
 
     fn section() -> SectionNbt {
         SectionNbt {

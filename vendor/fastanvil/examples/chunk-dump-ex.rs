@@ -1,5 +1,5 @@
 use fastanvil::{CurrentJavaChunk, Region};
-use fastnbt::from_bytes;
+use mcmap_nbt::from_bytes;
 
 //
 // This loads a region file, extracts a chunk from it, and uses serde to

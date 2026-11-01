@@ -58,8 +58,12 @@ impl ChunkData {
     pub fn from_bytes(data: &[u8]) -> Result<Self, String> {
         let inner = JavaChunk::from_bytes(data)
             .map_err(|error| format!("Failed to parse chunk: {error}"))?;
+        Ok(Self::from_chunk(inner))
+    }
+
+    pub(super) fn from_chunk(inner: JavaChunk) -> Self {
         let strategy = HeightmapStrategy::from_chunk(&inner);
-        Ok(Self { inner, strategy })
+        Self { inner, strategy }
     }
 
     pub fn inner(&self) -> &JavaChunk {

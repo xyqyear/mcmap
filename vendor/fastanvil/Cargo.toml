@@ -72,8 +72,8 @@ version = "0.8.12"
 [dependencies.byteorder]
 version = "1.3"
 
-[dependencies.fastnbt]
-version = "2"
+[dependencies.mcmap-nbt]
+path = "../../crates/mcmap-nbt"
 
 [dependencies.flate2]
 version = "1.0"

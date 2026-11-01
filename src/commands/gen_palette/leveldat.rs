@@ -26,6 +26,9 @@ use std::path::Path;
 
 use super::PaletteVariant;
 
+#[cfg(test)]
+mod tests;
+
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Default)]
@@ -53,7 +56,7 @@ struct LevelDatProbe {
 #[derive(Deserialize)]
 struct FmlProbe {
     #[serde(rename = "ItemData", default)]
-    item_data: Option<fastnbt::Value>,
+    item_data: Option<mcmap_nbt::Value>,
     #[serde(rename = "Registries", default)]
     registries: Option<RegistriesProbe>,
 }
@@ -61,7 +64,7 @@ struct FmlProbe {
 #[derive(Deserialize)]
 struct RegistriesProbe {
     #[serde(rename = "minecraft:blocks", default)]
-    blocks: Option<fastnbt::Value>,
+    blocks: Option<mcmap_nbt::Value>,
 }
 
 /// Detection-only entrypoint. `None` → Modern (the only variant that doesn't
@@ -75,7 +78,7 @@ pub fn detect_variant(level_dat: Option<&Path>) -> Result<PaletteVariant> {
     };
     let nbt = read_gzipped(path)?;
     let probe: LevelDatProbe =
-        fastnbt::from_bytes(&nbt).map_err(|e| format!("level.dat NBT parse: {}", e))?;
+        mcmap_nbt::from_bytes(&nbt).map_err(|e| format!("level.dat NBT parse: {}", e))?;
     let Some(fml) = probe.fml else {
         return Ok(PaletteVariant::Modern);
     };
@@ -118,7 +121,7 @@ struct ItemEntry17 {
 pub fn load_fml_registry_v17(path: &Path) -> Result<FmlRegistry17> {
     let nbt = read_gzipped(path)?;
     let data: LevelDatV17 =
-        fastnbt::from_bytes(&nbt).map_err(|e| format!("level.dat NBT parse: {}", e))?;
+        mcmap_nbt::from_bytes(&nbt).map_err(|e| format!("level.dat NBT parse: {}", e))?;
 
     let mut registry = FmlRegistry17::default();
     for entry in data.fml.item_data {
@@ -186,7 +189,7 @@ struct RegistryEntryV12 {
 pub fn load_fml_registry_v12(path: &Path) -> Result<FmlRegistry12> {
     let nbt = read_gzipped(path)?;
     let data: LevelDatV12 =
-        fastnbt::from_bytes(&nbt).map_err(|e| format!("level.dat NBT parse: {}", e))?;
+        mcmap_nbt::from_bytes(&nbt).map_err(|e| format!("level.dat NBT parse: {}", e))?;
 
     let mut registry = FmlRegistry12::default();
     let Some(blocks) = data.fml.registries.blocks else {

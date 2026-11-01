@@ -6,7 +6,7 @@
 use std::{collections::HashMap, env, fs::File};
 
 use fastanvil::Region;
-use fastnbt::Value;
+use mcmap_nbt::Value;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -62,7 +62,7 @@ fn main() {
         for x in 0..32 {
             match region.read_chunk(x, z) {
                 Ok(Some(data)) => {
-                    let mut chunk: Chunk = fastnbt::from_bytes(&data).unwrap();
+                    let mut chunk: Chunk = mcmap_nbt::from_bytes(&data).unwrap();
                     for section in chunk.sections.iter_mut() {
                         let palette: &mut Vec<PaletteItem> = &mut section.block_states.palette;
                         for item in palette {
@@ -71,7 +71,7 @@ fn main() {
                             }
                         }
                     }
-                    let ser = fastnbt::to_bytes(&chunk).unwrap();
+                    let ser = mcmap_nbt::to_bytes(&chunk).unwrap();
                     new_region.write_chunk(x, z, &ser).unwrap();
                 }
                 Ok(None) => {}

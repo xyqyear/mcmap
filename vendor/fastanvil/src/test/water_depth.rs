@@ -1,9 +1,9 @@
-use fastnbt::{nbt, LongArray, Value};
+use mcmap_nbt::{nbt, LongArray, Value};
 
 use crate::{BlockArchetype, Chunk, JavaChunk};
 
 fn decode(sections: Value) -> JavaChunk {
-    let bytes = fastnbt::to_bytes(&nbt!({
+    let bytes = mcmap_nbt::to_bytes(&nbt!({
         "DataVersion": 5023,
         "Status": "minecraft:full",
         "sections": sections

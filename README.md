@@ -2,6 +2,10 @@
 
 Fast command-line tool for rendering Minecraft region files and analyzing block usage.
 
+NBT parsing is owned by the small [mcmap-nbt workspace crate](crates/mcmap-nbt/README.md).
+Minecraft chunk decoding and rendering use the maintained
+[fastanvil source](vendor/fastanvil/UPSTREAM.md); no fastnbt package is required.
+
 ## Installation
 
 ### Download Pre-built Binaries

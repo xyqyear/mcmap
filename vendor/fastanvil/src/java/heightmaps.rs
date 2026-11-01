@@ -1,4 +1,4 @@
-use fastnbt::LongArray;
+use mcmap_nbt::LongArray;
 use serde::Deserialize;
 
 /// Various heightmaps kept up to date by Minecraft.

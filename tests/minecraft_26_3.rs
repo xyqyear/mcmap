@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use fastnbt::{Value, nbt};
+use mcmap_nbt::{Value, nbt};
 use serde_json::json;
 
 static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
@@ -32,7 +32,7 @@ impl Fixture {
                 }]
             });
             region
-                .write_chunk(*x, 0, &fastnbt::to_bytes(&chunk).unwrap())
+                .write_chunk(*x, 0, &mcmap_nbt::to_bytes(&chunk).unwrap())
                 .unwrap();
         }
         let bytes = region.into_inner().unwrap().into_inner();
@@ -143,12 +143,12 @@ fn mixed_string_wrappers_and_nondefault_states_keep_palette_indices() {
         "DataVersion": 5023, "Status": "minecraft:full",
         "sections": [{"Y": 0_i8, "biomes": {"palette": ["minecraft:plains"]}, "block_states": {
             "palette": palette,
-            "data": fastnbt::LongArray::new(vec![0x1111111100000000_i64; 256])
+            "data": mcmap_nbt::LongArray::new(vec![0x1111111100000000_i64; 256])
         }}]
     });
     let mut region = fastanvil::Region::create(Cursor::new(Vec::new())).unwrap();
     region
-        .write_chunk(0, 0, &fastnbt::to_bytes(&chunk).unwrap())
+        .write_chunk(0, 0, &mcmap_nbt::to_bytes(&chunk).unwrap())
         .unwrap();
     fs::write(
         fixture.0.join("r.0.0.mca"),

@@ -1,7 +1,7 @@
 //! functionality around bit manipulations specific to the Anvil file format.
 
 use bit_field::{BitArray, BitField};
-use fastnbt::LongArray;
+use mcmap_nbt::LongArray;
 use serde::Deserialize;
 
 // Various data versions for the anvil format

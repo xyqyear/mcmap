@@ -1,15 +1,15 @@
-use fastnbt::{nbt, Value};
+use mcmap_nbt::{nbt, Value};
 use serde::Deserialize;
 
 use super::{Block, BlockArchetype};
 
-fn palette(value: Value) -> fastnbt::error::Result<Vec<Block>> {
+fn palette(value: Value) -> mcmap_nbt::error::Result<Vec<Block>> {
     #[derive(Deserialize)]
     struct Section {
         palette: Vec<Block>,
     }
-    let bytes = fastnbt::to_bytes(&nbt!({ "palette": value })).unwrap();
-    fastnbt::from_bytes::<Section>(&bytes).map(|section| section.palette)
+    let bytes = mcmap_nbt::to_bytes(&nbt!({ "palette": value })).unwrap();
+    mcmap_nbt::from_bytes::<Section>(&bytes).map(|section| section.palette)
 }
 
 #[test]

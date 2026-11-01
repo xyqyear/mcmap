@@ -1,6 +1,6 @@
 // Pre-1.13 chunk NBT parsing.
 
-use fastnbt::{ByteArray, IntArray};
+use mcmap_nbt::{ByteArray, IntArray};
 use serde::Deserialize;
 
 pub const SECTION_BLOCKS: usize = 16 * 16 * 16; // 4096
@@ -168,7 +168,8 @@ pub struct LegacyChunkData {
 
 impl LegacyChunkData {
     pub fn from_bytes(data: &[u8]) -> Result<Self, String> {
-        let root: ChunkRoot = fastnbt::from_bytes(data).map_err(|e| format!("NBT parse: {}", e))?;
+        let root: ChunkRoot =
+            mcmap_nbt::from_bytes(data).map_err(|e| format!("NBT parse: {}", e))?;
         let level = root.level;
 
         let mut sections: [Option<LegacySection>; 16] = Default::default();
@@ -250,7 +251,7 @@ pub fn is_legacy_chunk(data: &[u8]) -> Result<bool, String> {
         #[serde(rename = "DataVersion", default)]
         data_version: Option<i32>,
     }
-    let probe: Probe = fastnbt::from_bytes(data).map_err(|e| format!("NBT probe: {}", e))?;
+    let probe: Probe = mcmap_nbt::from_bytes(data).map_err(|e| format!("NBT probe: {}", e))?;
     Ok(match probe.data_version {
         None => true,
         Some(v) => v < 1451,
