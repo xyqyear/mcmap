@@ -1093,7 +1093,7 @@ checksum = "08ab2867e3eeeca90e844d1940eab391c9dc5228783db2ed999acbc0a9ed375a"
 
 [[package]]
 name = "mcmap"
-version = "0.8.9"
+version = "0.9.0"
 dependencies = [
  "ahash",
  "clap 4.5.50",
